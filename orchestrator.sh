@@ -15,6 +15,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
 
+# Convertir les chemins relatifs en absolus
+PROJECT_DIR="$(cd "$SCRIPT_DIR" && realpath "$PROJECT_DIR" 2>/dev/null || echo "$SCRIPT_DIR/$PROJECT_DIR")"
+LOG_DIR="$(cd "$SCRIPT_DIR" && realpath "$LOG_DIR" 2>/dev/null || echo "$SCRIPT_DIR/$LOG_DIR")"
+
 # === COULEURS ===
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -27,9 +31,10 @@ NC='\033[0m'
 FEATURE_COUNT=0
 EPIC_FEATURE_COUNT=0
 TOTAL_FAILURES=0
+STATE_FILE="$SCRIPT_DIR/logs/state.json"
 
 # === TRACKING TOKENS ===
-TOKENS_FILE="$SCRIPT_DIR/logs/tokens.json"
+TOKENS_FILE="$LOG_DIR/tokens.json"
 TOTAL_INPUT_TOKENS=0
 TOTAL_OUTPUT_TOKENS=0
 TOTAL_COST_USD=0
@@ -38,6 +43,31 @@ TOTAL_COST_USD=0
 COST_PER_INPUT_TOKEN=0.000015
 COST_PER_OUTPUT_TOKEN=0.000075
 
+# === LOCKFILE ===
+LOCKFILE="$SCRIPT_DIR/.orchestrator.lock"
+
+# === CLEANUP & SIGNAL HANDLING ===
+CLAUDE_PID=""
+TMP_JSON=""
+
+cleanup() {
+  # Tuer le process Claude en cours si présent
+  if [ -n "$CLAUDE_PID" ] && kill -0 "$CLAUDE_PID" 2>/dev/null; then
+    log WARN "Arrêt en cours — kill Claude (PID $CLAUDE_PID)..."
+    kill "$CLAUDE_PID" 2>/dev/null || true
+    wait "$CLAUDE_PID" 2>/dev/null || true
+  fi
+  # Nettoyer le fichier temporaire
+  [ -n "$TMP_JSON" ] && rm -f "$TMP_JSON"
+  # Sauvegarder l'état
+  save_state
+  # Libérer le lock
+  rm -f "$LOCKFILE"
+  log INFO "Nettoyage terminé."
+}
+
+trap cleanup EXIT INT TERM
+
 # === FONCTIONS UTILITAIRES ===
 
 log() {
@@ -45,17 +75,37 @@ log() {
   local timestamp
   timestamp=$(date '+%Y-%m-%d %H:%M:%S')
   case "$level" in
-    INFO)  echo -e "${CYAN}[$timestamp]${NC} ${GREEN}[INFO]${NC}  $msg" ;;
-    WARN)  echo -e "${CYAN}[$timestamp]${NC} ${YELLOW}[WARN]${NC}  $msg" ;;
-    ERROR) echo -e "${CYAN}[$timestamp]${NC} ${RED}[ERROR]${NC} $msg" ;;
-    PHASE) echo -e "\n${CYAN}[$timestamp]${NC} ${BLUE}[═══════════════]${NC} $msg" ;;
-    COST)  echo -e "${CYAN}[$timestamp]${NC} ${YELLOW}[\$]${NC}     $msg" ;;
+    INFO)  printf "${CYAN}[%s]${NC} ${GREEN}[INFO]${NC}  %s\n" "$timestamp" "$msg" ;;
+    WARN)  printf "${CYAN}[%s]${NC} ${YELLOW}[WARN]${NC}  %s\n" "$timestamp" "$msg" ;;
+    ERROR) printf "${CYAN}[%s]${NC} ${RED}[ERROR]${NC} %s\n" "$timestamp" "$msg" ;;
+    PHASE) printf "\n${CYAN}[%s]${NC} ${BLUE}[═══════════════]${NC} %s\n" "$timestamp" "$msg" ;;
+    COST)  printf "${CYAN}[%s]${NC} ${YELLOW}[\$]${NC}     %s\n" "$timestamp" "$msg" ;;
   esac
-  echo "[$timestamp] [$level] $msg" >> "$LOG_DIR/orchestrator.log"
+  mkdir -p "$LOG_DIR"
+  printf "[%s] [%s] %s\n" "$timestamp" "$level" "$msg" >> "$LOG_DIR/orchestrator.log"
+}
+
+# Sauvegarde l'état des compteurs (survit à exec et crash)
+save_state() {
+  mkdir -p "$(dirname "$STATE_FILE")"
+  cat > "$STATE_FILE" << STATEEOF
+{"feature_count":$FEATURE_COUNT,"epic_feature_count":$EPIC_FEATURE_COUNT,"total_failures":$TOTAL_FAILURES}
+STATEEOF
+}
+
+# Restaure l'état si disponible
+restore_state() {
+  if command -v jq &> /dev/null && [ -f "$STATE_FILE" ]; then
+    FEATURE_COUNT=$(jq -r '.feature_count // 0' "$STATE_FILE")
+    EPIC_FEATURE_COUNT=$(jq -r '.epic_feature_count // 0' "$STATE_FILE")
+    TOTAL_FAILURES=$(jq -r '.total_failures // 0' "$STATE_FILE")
+    log INFO "État restauré : features=$FEATURE_COUNT, échecs=$TOTAL_FAILURES"
+  fi
 }
 
 # Initialise le fichier de tracking tokens
 init_tokens() {
+  mkdir -p "$LOG_DIR"
   if [ ! -f "$TOKENS_FILE" ]; then
     cat > "$TOKENS_FILE" << 'JSONEOF'
 {
@@ -70,7 +120,6 @@ init_tokens() {
 JSONEOF
   fi
 
-  # Charger les totaux existants (reprise après crash)
   if command -v jq &> /dev/null && [ -f "$TOKENS_FILE" ]; then
     TOTAL_INPUT_TOKENS=$(jq -r '.total_input_tokens // 0' "$TOKENS_FILE")
     TOTAL_OUTPUT_TOKENS=$(jq -r '.total_output_tokens // 0' "$TOKENS_FILE")
@@ -79,23 +128,19 @@ JSONEOF
 }
 
 # Parse la sortie JSON de Claude et extrait les tokens
-# Usage: track_tokens "phase_name" "feature_name" "$json_output"
 track_tokens() {
   local phase="$1"
   local feature="${2:-}"
   local json_output="$3"
 
-  # Pas de jq = pas de tracking
   if ! command -v jq &> /dev/null; then
     return 0
   fi
 
-  # Extraire les tokens depuis la sortie JSON
   local input_tokens output_tokens
   input_tokens=$(echo "$json_output" | jq -r '.usage.input_tokens // 0' 2>/dev/null || echo "0")
   output_tokens=$(echo "$json_output" | jq -r '.usage.output_tokens // 0' 2>/dev/null || echo "0")
 
-  # Si pas de données d'usage, tenter le format alternatif
   if [ "$input_tokens" = "0" ] && [ "$output_tokens" = "0" ]; then
     input_tokens=$(echo "$json_output" | jq -r '.result.usage.input_tokens // 0' 2>/dev/null || echo "0")
     output_tokens=$(echo "$json_output" | jq -r '.result.usage.output_tokens // 0' 2>/dev/null || echo "0")
@@ -104,21 +149,21 @@ track_tokens() {
   [ "$input_tokens" = "null" ] && input_tokens=0
   [ "$output_tokens" = "null" ] && output_tokens=0
 
+  # Valider que ce sont des entiers
+  case "$input_tokens" in ''|*[!0-9]*) input_tokens=0 ;; esac
+  case "$output_tokens" in ''|*[!0-9]*) output_tokens=0 ;; esac
+
   if [ "$input_tokens" -eq 0 ] && [ "$output_tokens" -eq 0 ]; then
     return 0
   fi
 
-  # Calculer le coût
   local cost
-  cost=$(echo "$input_tokens $output_tokens $COST_PER_INPUT_TOKEN $COST_PER_OUTPUT_TOKEN" | \
-    awk '{printf "%.4f", $1 * $3 + $2 * $4}')
+  cost=$(awk "BEGIN {printf \"%.4f\", $input_tokens * $COST_PER_INPUT_TOKEN + $output_tokens * $COST_PER_OUTPUT_TOKEN}")
 
-  # Accumuler
   TOTAL_INPUT_TOKENS=$((TOTAL_INPUT_TOKENS + input_tokens))
   TOTAL_OUTPUT_TOKENS=$((TOTAL_OUTPUT_TOKENS + output_tokens))
-  TOTAL_COST_USD=$(echo "$TOTAL_COST_USD $cost" | awk '{printf "%.4f", $1 + $2}')
+  TOTAL_COST_USD=$(awk "BEGIN {printf \"%.4f\", $TOTAL_COST_USD + $cost}")
 
-  # Mettre à jour le fichier JSON
   local timestamp
   timestamp=$(date -Iseconds)
 
@@ -159,44 +204,40 @@ track_tokens() {
   log COST "tokens: +${input_tokens}in/+${output_tokens}out (\$${cost}) | Total: \$${TOTAL_COST_USD}"
 }
 
-# Affiche un résumé des coûts
 print_cost_summary() {
   if ! command -v jq &> /dev/null || [ ! -f "$TOKENS_FILE" ]; then
     return 0
   fi
 
   local invocations total_in total_out total_cost
-  invocations=$(jq -r '.invocations' "$TOKENS_FILE")
-  total_in=$(jq -r '.total_input_tokens' "$TOKENS_FILE")
-  total_out=$(jq -r '.total_output_tokens' "$TOKENS_FILE")
-  total_cost=$(jq -r '.total_cost_usd' "$TOKENS_FILE")
+  invocations=$(jq -r '.invocations // 0' "$TOKENS_FILE")
+  total_in=$(jq -r '.total_input_tokens // 0' "$TOKENS_FILE")
+  total_out=$(jq -r '.total_output_tokens // 0' "$TOKENS_FILE")
+  total_cost=$(jq -r '.total_cost_usd // 0' "$TOKENS_FILE")
 
   echo ""
-  echo -e "${YELLOW}═══════════════════════════════════════════════════${NC}"
-  echo -e "${YELLOW}  CONSOMMATION TOKENS${NC}"
-  echo -e "${YELLOW}═══════════════════════════════════════════════════${NC}"
-  echo -e "  Invocations Claude :  $invocations"
-  echo -e "  Tokens input :        $total_in"
-  echo -e "  Tokens output :       $total_out"
-  echo -e "  Tokens total :        $((total_in + total_out))"
-  echo -e "  ${YELLOW}Coût estimé :       \$${total_cost} USD${NC}"
+  printf "${YELLOW}═══════════════════════════════════════════════════${NC}\n"
+  printf "${YELLOW}  CONSOMMATION TOKENS${NC}\n"
+  printf "${YELLOW}═══════════════════════════════════════════════════${NC}\n"
+  printf "  Invocations Claude :  %s\n" "$invocations"
+  printf "  Tokens input :        %s\n" "$total_in"
+  printf "  Tokens output :       %s\n" "$total_out"
+  printf "  Tokens total :        %s\n" "$((total_in + total_out))"
+  printf "  ${YELLOW}Coût estimé :       \$%s USD${NC}\n" "$total_cost"
   echo ""
 
-  # Top 3 phases les plus coûteuses
-  echo -e "  ${CYAN}Par phase :${NC}"
+  printf "  ${CYAN}Par phase :${NC}\n"
   jq -r '.by_phase | to_entries | sort_by(-.value.cost_usd) | .[:5][] | "    \(.key): $\(.value.cost_usd) (\(.value.calls) appels)"' "$TOKENS_FILE" 2>/dev/null || true
   echo ""
 
-  # Top 3 features les plus coûteuses
   if jq -e '.by_feature | length > 0' "$TOKENS_FILE" > /dev/null 2>&1; then
-    echo -e "  ${CYAN}Par feature :${NC}"
+    printf "  ${CYAN}Par feature :${NC}\n"
     jq -r '.by_feature | to_entries | sort_by(-.value.cost_usd) | .[:5][] | "    \(.key): $\(.value.cost_usd)"' "$TOKENS_FILE" 2>/dev/null || true
     echo ""
   fi
 }
 
 # Run Claude avec tracking de tokens et logs temps réel
-# Usage: run_claude "prompt" [max_turns] [log_file] [phase_name] [feature_name]
 run_claude() {
   local prompt="$1"
   local max_turns="${2:-$MAX_TURNS_PER_INVOCATION}"
@@ -205,70 +246,84 @@ run_claude() {
   local feature_name="${5:-}"
 
   local exit_code=0
-  local tmp_json
-  tmp_json=$(mktemp)
+  TMP_JSON=$(mktemp)
   local start_time
   start_time=$(date +%s)
 
   log INFO "→ Claude lancé [phase=$phase_name] [max_turns=$max_turns]..."
 
-  # Lancer Claude : stream text en temps réel, capture JSON séparément
-  # On utilise --output-format stream-json pour avoir du feedback en temps réel
-  # Fallback : si stream-json échoue, utiliser json classique
-  if [ "$VERBOSE" = true ]; then
-    claude -p "$prompt" \
-      --dangerously-skip-permissions \
-      --max-turns "$max_turns" \
-      --output-format json \
-      -d "$PROJECT_DIR" > "$tmp_json" 2>&1 &
-  else
-    claude -p "$prompt" \
-      --dangerously-skip-permissions \
-      --max-turns "$max_turns" \
-      --output-format json \
-      -d "$PROJECT_DIR" > "$tmp_json" 2>&1 &
-  fi
+  # Lancer Claude en background avec output JSON
+  claude -p "$prompt" \
+    --dangerously-skip-permissions \
+    --max-turns "$max_turns" \
+    --output-format json \
+    -d "$PROJECT_DIR" > "$TMP_JSON" 2>&1 &
 
-  local claude_pid=$!
+  CLAUDE_PID=$!
 
-  # Boucle de monitoring : affiche la progression pendant que Claude tourne
+  # Monitoring : heartbeat + watchdog stall detection
   local dots=0
-  while kill -0 "$claude_pid" 2>/dev/null; do
+  local last_size=0
+  local stall_count=0
+  local timeout="${CLAUDE_TIMEOUT:-0}"
+
+  while kill -0 "$CLAUDE_PID" 2>/dev/null; do
     dots=$((dots + 1))
     local elapsed=$(( $(date +%s) - start_time ))
     local mins=$((elapsed / 60))
     local secs=$((elapsed % 60))
+    local size
+    size=$(wc -c < "$TMP_JSON" 2>/dev/null || echo "0")
 
-    # Afficher un heartbeat toutes les 15 secondes
+    # Heartbeat toutes les 15s
     if [ $((dots % 3)) -eq 0 ]; then
-      local size
-      size=$(wc -c < "$tmp_json" 2>/dev/null || echo "0")
       printf "\r  ${CYAN}⏳ %s | %02d:%02d | %s bytes reçus${NC}   " \
         "$phase_name" "$mins" "$secs" "$size" >&2
+    fi
+
+    # Watchdog : détecter si Claude est bloqué (aucune donnée nouvelle)
+    if [ "$size" = "$last_size" ]; then
+      stall_count=$((stall_count + 1))
+    else
+      stall_count=0
+      last_size="$size"
+    fi
+
+    # Si bloqué depuis 2 minutes (24 x 5s), log un warning
+    if [ "$stall_count" -eq 24 ]; then
+      log WARN "Claude semble bloqué (pas de nouvelles données depuis 2min) [phase=$phase_name]"
+    fi
+
+    # Timeout global : kill si dépassé
+    if [ "$timeout" -gt 0 ] && [ "$elapsed" -ge "$timeout" ]; then
+      log ERROR "Timeout atteint (${timeout}s) — kill Claude [phase=$phase_name]"
+      kill "$CLAUDE_PID" 2>/dev/null || true
+      wait "$CLAUDE_PID" 2>/dev/null || true
+      exit_code=124  # Convention timeout
+      CLAUDE_PID=""
+      break
     fi
 
     sleep 5
   done
 
-  # Récupérer le code de sortie
-  wait "$claude_pid" || exit_code=$?
+  # Récupérer le code de sortie si pas déjà fait (timeout)
+  if [ -n "$CLAUDE_PID" ]; then
+    wait "$CLAUDE_PID" || exit_code=$?
+    CLAUDE_PID=""
+  fi
 
-  local end_time
-  end_time=$(date +%s)
-  local duration=$(( end_time - start_time ))
+  local duration=$(( $(date +%s) - start_time ))
   local dur_mins=$((duration / 60))
   local dur_secs=$((duration % 60))
 
-  # Nettoyer la ligne de progression
   printf "\r%80s\r" "" >&2
 
   log INFO "← Claude terminé [phase=$phase_name] [durée=${dur_mins}m${dur_secs}s] [exit=$exit_code]"
 
-  # Lire la sortie JSON
   local json_output
-  json_output=$(cat "$tmp_json")
+  json_output=$(cat "$TMP_JSON")
 
-  # Extraire le texte pour le log
   local text_output
   if command -v jq &> /dev/null; then
     text_output=$(echo "$json_output" | jq -r '.result // .message // .' 2>/dev/null || echo "$json_output")
@@ -276,41 +331,41 @@ run_claude() {
     text_output="$json_output"
   fi
 
-  # Logger dans le fichier de log de la phase
   echo "$text_output" >> "$log_file"
   if [ "$VERBOSE" = true ]; then
-    # Afficher les premières et dernières lignes pour savoir ce qui s'est passé
     local line_count
     line_count=$(echo "$text_output" | wc -l)
     if [ "$line_count" -gt 20 ]; then
       echo "$text_output" | head -5
-      echo "  ... ($line_count lignes, voir $log_file pour le détail) ..."
+      echo "  ... ($line_count lignes, voir $log_file) ..."
       echo "$text_output" | tail -5
     else
       echo "$text_output"
     fi
   fi
 
-  # Tracker les tokens
   track_tokens "$phase_name" "$feature_name" "$json_output"
 
-  # Vérifier le budget max
-  if [ -n "${MAX_BUDGET_USD:-}" ] && command -v awk &> /dev/null; then
+  if [ -n "${MAX_BUDGET_USD:-}" ]; then
     local over_budget
-    over_budget=$(echo "$TOTAL_COST_USD $MAX_BUDGET_USD" | awk '{print ($1 > $2) ? "yes" : "no"}')
+    over_budget=$(awk "BEGIN {print ($TOTAL_COST_USD > $MAX_BUDGET_USD) ? \"yes\" : \"no\"}")
     if [ "$over_budget" = "yes" ]; then
       log ERROR "Budget dépassé ! \$${TOTAL_COST_USD} > \$${MAX_BUDGET_USD}"
       print_cost_summary
-      rm -f "$tmp_json"
+      rm -f "$TMP_JSON"
+      TMP_JSON=""
       exit 1
     fi
   fi
 
-  rm -f "$tmp_json"
+  rm -f "$TMP_JSON"
+  TMP_JSON=""
   return $exit_code
 }
 
 # Remplace les placeholders {{VAR}} dans un fichier phase
+# Note: pour les prompts avec du contenu build/test, on utilise
+# write_prompt_file pour éviter les problèmes de caractères spéciaux
 render_phase() {
   local phase_file="$1"
   shift
@@ -327,34 +382,81 @@ render_phase() {
   echo "$content"
 }
 
+# Écrit un prompt dans un fichier temporaire pour éviter les problèmes
+# de caractères spéciaux dans les outputs build/test
+write_fix_prompt() {
+  local attempt="$1" max_fix="$2" build_exit="$3" build_output="$4" test_exit="$5" test_output="$6"
+  local tmp_prompt
+  tmp_prompt=$(mktemp)
+  cat > "$tmp_prompt" << FIXEOF
+Tests/build échoués (tentative ${attempt}/${max_fix}).
+
+BUILD (exit ${build_exit}):
+${build_output}
+
+TESTS (exit ${test_exit}):
+${test_output}
+
+Analyse et corrige les erreurs :
+
+1. Lis le message d'erreur attentivement
+2. Identifie la cause racine (pas juste le symptôme)
+3. Corrige le code applicatif OU le test si le test est incorrect
+4. Ne désactive JAMAIS un test — le corriger ou corriger le code
+5. Commite la correction
+
+Si tu as déjà échoué sur le même problème :
+- Essaie une approche différente
+- Mets à jour CLAUDE.md avec une règle pour éviter ce piège à l'avenir
+FIXEOF
+  cat "$tmp_prompt"
+  rm -f "$tmp_prompt"
+}
+
 # Lit la prochaine feature non cochée de la ROADMAP
 next_feature() {
   grep -m1 '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null | sed 's/^- \[ \] //' || true
 }
 
-# Nom court pour les branches git
+# Nom court pour les branches git (avec fallback si vide)
 branch_name() {
-  echo "$1" | sed 's/ |.*//;s/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]' | head -c 40
+  local name
+  name=$(echo "$1" | sed 's/ |.*//;s/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]' | sed 's/^-*//;s/-*$//' | head -c 40)
+  if [ -z "$name" ]; then
+    name="feature-$(date +%s)"
+  fi
+  echo "$name"
+}
+
+# Exécute une commande dans PROJECT_DIR sans changer le pwd global
+run_in_project() {
+  ( cd "$PROJECT_DIR" && eval "$@" )
 }
 
 # Pause pour intervention humaine
 human_pause() {
+  # Si stdin n'est pas un terminal (mode nohup), skip la pause
+  if [ ! -t 0 ]; then
+    log WARN "Pause ignorée (pas de terminal interactif) : $1"
+    return 0
+  fi
+
   local reason="$1"
   log PHASE "PAUSE HUMAINE — $reason"
   echo ""
-  echo -e "${YELLOW}═══════════════════════════════════════════════════${NC}"
-  echo -e "${YELLOW}  PAUSE — Intervention humaine requise${NC}"
-  echo -e "${YELLOW}  Raison : $reason${NC}"
-  echo -e "${YELLOW}  Features complétées : $FEATURE_COUNT${NC}"
-  echo -e "${YELLOW}  Coût actuel : \$${TOTAL_COST_USD} USD${NC}"
-  echo -e "${YELLOW}═══════════════════════════════════════════════════${NC}"
+  printf "${YELLOW}═══════════════════════════════════════════════════${NC}\n"
+  printf "${YELLOW}  PAUSE — Intervention humaine requise${NC}\n"
+  printf "${YELLOW}  Raison : %s${NC}\n" "$reason"
+  printf "${YELLOW}  Features complétées : %s${NC}\n" "$FEATURE_COUNT"
+  printf "${YELLOW}  Coût actuel : \$%s USD${NC}\n" "$TOTAL_COST_USD"
+  printf "${YELLOW}═══════════════════════════════════════════════════${NC}\n"
   echo ""
-  echo -e "  Commandes :"
-  echo -e "    ${GREEN}c${NC} — continuer"
-  echo -e "    ${GREEN}r${NC} — voir la roadmap"
-  echo -e "    ${GREEN}l${NC} — voir les logs récents"
-  echo -e "    ${GREEN}t${NC} — voir les tokens consommés"
-  echo -e "    ${GREEN}q${NC} — quitter"
+  echo "  Commandes :"
+  printf "    ${GREEN}c${NC} — continuer\n"
+  printf "    ${GREEN}r${NC} — voir la roadmap\n"
+  printf "    ${GREEN}l${NC} — voir les logs récents\n"
+  printf "    ${GREEN}t${NC} — voir les tokens consommés\n"
+  printf "    ${GREEN}q${NC} — quitter\n"
   echo ""
 
   while true; do
@@ -375,26 +477,40 @@ human_pause() {
 # ============================================================
 
 if ! command -v claude &> /dev/null; then
-  echo -e "${RED}Erreur : 'claude' CLI non trouvé.${NC}"
+  printf "${RED}Erreur : 'claude' CLI non trouvé.${NC}\n"
   exit 1
 fi
 
 if ! command -v jq &> /dev/null; then
-  echo -e "${YELLOW}⚠ jq non trouvé — le tracking de tokens sera désactivé.${NC}"
-  echo -e "  Installer : ${CYAN}sudo apt install jq${NC}"
+  printf "${YELLOW}⚠ jq non trouvé — le tracking de tokens sera désactivé.${NC}\n"
+  printf "  Installer : ${CYAN}sudo apt install jq${NC}\n"
 fi
 
 if [ ! -f "$SCRIPT_DIR/BRIEF.md" ]; then
-  echo -e "${RED}Erreur : BRIEF.md non trouvé.${NC}"
+  printf "${RED}Erreur : BRIEF.md non trouvé.${NC}\n"
   echo ""
   echo "  Ce script doit être lancé depuis un workspace créé par init.sh."
   echo "  Depuis le repo template, lancez :"
-  echo -e "    ${CYAN}./init.sh mon-projet${NC}"
+  printf "    ${CYAN}./init.sh mon-projet${NC}\n"
   exit 1
 fi
 
+# Lockfile — empêche l'exécution concurrente
+if [ -f "$LOCKFILE" ]; then
+  existing_pid=$(cat "$LOCKFILE" 2>/dev/null || echo "")
+  if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+    printf "${RED}Erreur : orchestrateur déjà en cours (PID %s).${NC}\n" "$existing_pid"
+    printf "  Si ce n'est pas le cas : ${CYAN}rm %s${NC}\n" "$LOCKFILE"
+    exit 1
+  fi
+  log WARN "Lock orphelin détecté (PID $existing_pid mort), nettoyage."
+  rm -f "$LOCKFILE"
+fi
+echo $$ > "$LOCKFILE"
+
 mkdir -p "$LOG_DIR"
 init_tokens
+restore_state
 
 log PHASE "DÉMARRAGE DE L'AGENT AUTONOME"
 log INFO "Config : MAX_FEATURES=$MAX_FEATURES | MAX_FIX=$MAX_FIX_ATTEMPTS | EPIC_SIZE=$EPIC_SIZE"
@@ -415,7 +531,7 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
 
   if [ ! -d "$PROJECT_DIR/.git" ]; then
     mkdir -p "$PROJECT_DIR"
-    cd "$PROJECT_DIR" && git init -b main > /dev/null 2>&1 && cd - > /dev/null
+    run_in_project "git init -b main > /dev/null 2>&1"
   fi
 
   if [ ! -f "$PROJECT_DIR/BRIEF.md" ]; then
@@ -429,10 +545,12 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
            "$PROJECT_DIR/logs"
 
   mkdir -p "$PROJECT_DIR/.claude/skills"
-  for skill in "$SCRIPT_DIR/skills-templates/"*.md; do
-    dest="$PROJECT_DIR/.claude/skills/$(basename "$skill")"
-    [ ! -f "$dest" ] && cp "$skill" "$dest"
-  done
+  if compgen -G "$SCRIPT_DIR/skills-templates/*.md" > /dev/null 2>&1; then
+    for skill in "$SCRIPT_DIR/skills-templates/"*.md; do
+      dest="$PROJECT_DIR/.claude/skills/$(basename "$skill")"
+      [ ! -f "$dest" ] && cp "$skill" "$dest"
+    done
+  fi
 
   local_prompt=$(render_phase "00-bootstrap.md")
   run_claude "$local_prompt" 60 "$LOG_DIR/00-bootstrap.log" "bootstrap"
@@ -488,8 +606,12 @@ while [ $FEATURE_COUNT -lt $MAX_FEATURES ]; do
 
   FEATURE_COUNT=$((FEATURE_COUNT + 1))
   EPIC_FEATURE_COUNT=$((EPIC_FEATURE_COUNT + 1))
+  save_state
 
   log PHASE "FEATURE #$FEATURE_COUNT : $feature_name"
+
+  # --- S'assurer qu'on est sur main avant de commencer ---
+  run_in_project "git checkout main 2>/dev/null || true"
 
   # --- Veille ciblée avant chaque epic ---
   if [ "$ENABLE_RESEARCH" = true ] && [ "$EPIC_FEATURE_COUNT" -eq 1 ]; then
@@ -519,10 +641,8 @@ EOF
   while [ $attempt -lt $MAX_FIX_ATTEMPTS ]; do
     log INFO "Tests — tentative $((attempt + 1))/$MAX_FIX_ATTEMPTS"
 
-    cd "$PROJECT_DIR"
-    BUILD_OUTPUT=$($BUILD_COMMAND 2>&1) && BUILD_EXIT=0 || BUILD_EXIT=$?
-    TEST_OUTPUT=$($TEST_COMMAND 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
-    cd - > /dev/null
+    BUILD_OUTPUT=$(run_in_project "$BUILD_COMMAND 2>&1") && BUILD_EXIT=0 || BUILD_EXIT=$?
+    TEST_OUTPUT=$(run_in_project "$TEST_COMMAND 2>&1") && TEST_EXIT=0 || TEST_EXIT=$?
 
     if [ $BUILD_EXIT -eq 0 ] && [ $TEST_EXIT -eq 0 ]; then
       tests_passed=true
@@ -534,13 +654,9 @@ EOF
 
     if [ $attempt -lt $MAX_FIX_ATTEMPTS ]; then
       log WARN "Échec — correction en cours (tentative $attempt)..."
-      fix_prompt=$(render_phase "04-test-fix.md" \
-        "ATTEMPT=$attempt" \
-        "MAX_FIX=$MAX_FIX_ATTEMPTS" \
-        "BUILD_EXIT=$BUILD_EXIT" \
-        "BUILD_OUTPUT=${BUILD_OUTPUT: -3000}" \
-        "TEST_EXIT=$TEST_EXIT" \
-        "TEST_OUTPUT=${TEST_OUTPUT: -3000}")
+      fix_prompt=$(write_fix_prompt "$attempt" "$MAX_FIX_ATTEMPTS" \
+        "$BUILD_EXIT" "${BUILD_OUTPUT: -3000}" \
+        "$TEST_EXIT" "${TEST_OUTPUT: -3000}")
       run_claude "$fix_prompt" 30 "$LOG_DIR/feature-$FEATURE_COUNT-fix-$attempt.log" "fix" "$feature_name"
     fi
   done
@@ -548,6 +664,8 @@ EOF
   if [ "$tests_passed" = false ]; then
     log ERROR "Feature '$feature_name' abandonnée après $MAX_FIX_ATTEMPTS tentatives."
     TOTAL_FAILURES=$((TOTAL_FAILURES + 1))
+    # Retour sur main pour ne pas polluer la feature suivante
+    run_in_project "git checkout main 2>/dev/null || true"
   fi
 
   # --- Reflect & Evolve ---
@@ -565,15 +683,15 @@ EOF
       human_pause "Approuver le merge de : $feature_name"
     fi
 
-    cd "$PROJECT_DIR"
-    current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    current_branch=$(run_in_project "git branch --show-current 2>/dev/null || echo ''")
     if [ -n "$current_branch" ] && [ "$current_branch" != "main" ]; then
-      git checkout main 2>/dev/null && git merge --no-ff "$current_branch" -m "feat: $feature_name" 2>/dev/null || true
+      run_in_project "git checkout main 2>/dev/null && git merge --no-ff '$current_branch' -m 'feat: $feature_name' 2>/dev/null || true"
     fi
-    cd - > /dev/null
 
     log INFO "Feature '$feature_name' mergée."
   fi
+
+  save_state
 
   # --- Reset compteur epic ---
   if [ "$EPIC_FEATURE_COUNT" -ge "$EPIC_SIZE" ]; then
@@ -606,6 +724,7 @@ if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
 
   if [ ! -f "$PROJECT_DIR/DONE.md" ] && grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
     log INFO "Nouvelles features ajoutées — relancement de la boucle."
+    save_state
     exec "$0"
   fi
 fi
@@ -614,10 +733,9 @@ fi
 # PHASE POST-PROJET — AUTO-AMÉLIORATION DE L'ORCHESTRATEUR
 # ============================================================
 
-if [ -n "${TEMPLATE_DIR:-}" ] && [ -d "$TEMPLATE_DIR/phases" ]; then
-  log PHASE "AUTO-AMÉLIORATION DE L'ORCHESTRATEUR"
+log PHASE "AUTO-AMÉLIORATION DE L'ORCHESTRATEUR"
 
-  run_claude "$(cat <<'IMPROVE'
+run_claude "$(cat <<'IMPROVE'
 PHASE AUTO-AMÉLIORATION DE L'ORCHESTRATEUR
 
 Le projet est terminé. Analyse l'ensemble des logs pour améliorer
@@ -644,9 +762,6 @@ avec cette structure :
 ### Phases à modifier
 Pour chaque phase concernée :
 - **Phase XX** : [problème constaté] → [amélioration proposée]
-  ```markdown
-  [nouveau contenu suggéré pour le prompt, ou diff]
-  ```
 
 ### Nouvelles phases à ajouter
 - [description de la phase] — [pourquoi elle manquait]
@@ -655,18 +770,16 @@ Pour chaque phase concernée :
 - [paramètre] : [valeur actuelle] → [valeur recommandée] — [pourquoi]
 
 ### Nouvelles skills utiles
-- [nom du skill] — [ce qu'il fait] — [pourquoi il serait utile pour les futurs projets]
+- [nom du skill] — [ce qu'il fait] — [pourquoi il serait utile]
 
 ### Garde-fous
 - [garde-fou à ajouter/modifier] — [incident qui l'a motivé]
 
-Sois concret et actionnable. Chaque suggestion doit pouvoir être
-appliquée directement au repo template de l'orchestrateur.
+Sois concret et actionnable.
 IMPROVE
-  )" 30 "$LOG_DIR/orchestrator-improvements.log" "self-improve"
+)" 30 "$LOG_DIR/orchestrator-improvements.log" "self-improve"
 
-  log INFO "Suggestions d'amélioration écrites dans project/orchestrator-improvements.md"
-fi
+log INFO "Suggestions d'amélioration : project/orchestrator-improvements.md"
 
 # ============================================================
 # BILAN FINAL
@@ -685,14 +798,14 @@ fi
 print_cost_summary
 
 echo ""
-echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}  Agent terminé.${NC}"
-echo -e "${GREEN}  Features : $FEATURE_COUNT | Échecs : $TOTAL_FAILURES${NC}"
-echo -e "${GREEN}  Coût total : \$${TOTAL_COST_USD} USD${NC}"
-echo -e "${GREEN}  Logs : $LOG_DIR/${NC}"
-echo -e "${GREEN}  Tokens : $TOKENS_FILE${NC}"
-echo -e "${GREEN}  Projet : $PROJECT_DIR/${NC}"
+printf "${GREEN}═══════════════════════════════════════════════════${NC}\n"
+printf "${GREEN}  Agent terminé.${NC}\n"
+printf "${GREEN}  Features : %s | Échecs : %s${NC}\n" "$FEATURE_COUNT" "$TOTAL_FAILURES"
+printf "${GREEN}  Coût total : \$%s USD${NC}\n" "$TOTAL_COST_USD"
+printf "${GREEN}  Logs : %s/${NC}\n" "$LOG_DIR"
+printf "${GREEN}  Tokens : %s${NC}\n" "$TOKENS_FILE"
+printf "${GREEN}  Projet : %s/${NC}\n" "$PROJECT_DIR"
 if [ -f "$PROJECT_DIR/orchestrator-improvements.md" ]; then
-  echo -e "${GREEN}  Améliorations : $PROJECT_DIR/orchestrator-improvements.md${NC}"
+  printf "${GREEN}  Améliorations : %s/orchestrator-improvements.md${NC}\n" "$PROJECT_DIR"
 fi
-echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
+printf "${GREEN}═══════════════════════════════════════════════════${NC}\n"

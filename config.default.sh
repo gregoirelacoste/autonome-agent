@@ -37,6 +37,10 @@ LINT_COMMAND="npm run lint"              # Commande lint (vide = désactivé)
 # === BUDGET ===
 MAX_BUDGET_USD=""                        # Budget max en USD (vide = illimité). Ex: "5.00"
 
+# === TIMEOUTS ===
+CLAUDE_TIMEOUT=600                       # Timeout par invocation Claude en secondes (0 = illimité)
+                                         # 600 = 10min. Si Claude ne produit rien pendant ce délai, on kill.
+
 # === LOGS ===
 LOG_DIR="./logs"                         # Dossier des logs orchestrateur
 VERBOSE=true                             # Logs détaillés dans la console
