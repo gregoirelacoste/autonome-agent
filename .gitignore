@@ -1,0 +1,12 @@
+# Projet généré (a son propre git)
+project/
+
+# Logs de l'orchestrateur
+logs/
+
+# Brief personnel (optionnel — décommenter si privé)
+# BRIEF.md
+
+# OS
+.DS_Store
+Thumbs.db
