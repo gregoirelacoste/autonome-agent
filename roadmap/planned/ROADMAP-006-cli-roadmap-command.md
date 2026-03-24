@@ -22,7 +22,7 @@ Commande `agent roadmap` avec 3 niveaux de verbosité :
 
 ### Niveau 1 : Compact (défaut)
 ```
-ROADMAP — autonome-agent         P0: 1 | P1: 4 | P2: 3 | P3: 2
+ROADMAP — orc         P0: 1 | P1: 4 | P2: 3 | P3: 2
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  IN-PROGRESS (2)
   ● ROADMAP-001 [P1/L] adopt.sh — Script d'adoption       adoption,cli

@@ -49,7 +49,7 @@
 
 - [ ] `deploy.sh` — script d'installation one-shot sur VPS Ubuntu/Debian
   - Installe Node.js 22, jq, git, Claude Code CLI
-  - Clone le repo template dans `/opt/autonome-agent/`
+  - Clone le repo template dans `/opt/orc/`
   - Configure `ANTHROPIC_API_KEY` dans `.env`
   - Crée `~/projects/` et symlink `agent` global
 - [ ] `agent.sh` — CLI de gestion multi-projets
