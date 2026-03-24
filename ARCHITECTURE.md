@@ -361,7 +361,7 @@ project/
 
 ```bash
 # Cloner le repo orchestrateur
-git clone git@github.com:gregoirelacoste/autonome-agent.git mon-projet
+git clone git@github.com:gregoirelacoste/orc.git mon-projet
 cd mon-projet
 
 # Option A : Brief assisté par Claude (recommandé)
