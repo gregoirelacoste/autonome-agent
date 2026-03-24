@@ -21,9 +21,9 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-INSTALL_DIR="/opt/autonome-agent"
+INSTALL_DIR="/opt/orc"
 PROJECTS_DIR="$HOME/projects"
-REPO_URL="https://github.com/gregoirelacoste/autonome-agent.git"
+REPO_URL="https://github.com/gregoirelacoste/orc.git"
 
 # ============================================================
 echo ""
