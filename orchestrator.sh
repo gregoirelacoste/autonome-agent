@@ -529,9 +529,10 @@ check_signals() {
       human_pause "Pause demandée via fichier signal"
     else
       log WARN "Pause demandée mais pas de terminal — l'agent attend un signal continue."
-      notify "Pause demandée — en attente de .orc/continue"
-      # Attente active d'un fichier continue
+      notify "Pause demandée — en attente de .orc/continue (ou label orc:continue sur GitHub)"
+      # Attente active : fichier continue OU signal GitHub
       while [ ! -f "$signal_dir/continue" ]; do
+        gh_check_signals  # Convertit les labels GitHub en fichiers locaux
         sleep 5
       done
       rm -f "$signal_dir/continue"
@@ -693,6 +694,10 @@ gh_create_pr() {
 }
 
 # Merge une PR (auto ou après review)
+# L'approbation peut venir de TROIS sources (premier arrivé gagne) :
+#   1. PR review "APPROVED" sur GitHub
+#   2. Fichier .orc/approve (touch local ou via script)
+#   3. Terminal interactif (human_pause si stdin est un TTY)
 gh_merge_pr() {
   local pr_url="$1"
 
@@ -706,42 +711,76 @@ gh_merge_pr() {
   pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$')
 
   if [ "$REQUIRE_HUMAN_APPROVAL" = true ]; then
-    # Attendre la review (poll toutes les 30s, timeout 24h)
-    log INFO "GitHub: en attente de review pour PR #$pr_number..."
-    notify "PR #$pr_number en attente de review : $pr_url"
-    gh_comment "⏳ Feature #$FEATURE_COUNT en attente de review humaine → $pr_url"
+    log INFO "En attente d'approbation pour PR #$pr_number..."
+    log INFO "  → GitHub : approuver la PR sur $pr_url"
+    log INFO "  → Local  : touch $SCRIPT_DIR/.orc/approve"
+    if [ -t 0 ]; then
+      log INFO "  → Terminal : répondre 'c' à la pause interactive"
+    fi
+    notify "PR #$pr_number en attente d'approbation : $pr_url (ou touch .orc/approve)"
+    gh_comment "⏳ Feature #$FEATURE_COUNT en attente d'approbation → $pr_url
+_Approuver via PR review, ou localement : \`touch .orc/approve\`_"
 
-    local wait_count=0
-    local max_wait=2880  # 24h à 30s d'intervalle
-    while [ $wait_count -lt $max_wait ]; do
-      local review_state
-      review_state=$(gh pr view "$pr_number" \
-        --repo "$repo_slug" \
-        --json reviewDecision \
-        --jq '.reviewDecision' 2>/dev/null || echo "")
+    # Nettoyage préventif
+    rm -f "$SCRIPT_DIR/.orc/approve"
 
-      if [ "$review_state" = "APPROVED" ]; then
-        log INFO "GitHub: PR #$pr_number approuvée !"
-        break
-      fi
+    # Si terminal interactif : proposer la pause classique en parallèle
+    if [ -t 0 ]; then
+      # Mode interactif : human_pause classique + poll GitHub en background
+      _gh_poll_approval "$pr_number" "$repo_slug" &
+      local poll_pid=$!
+      human_pause "Approuver la PR #$pr_number ($pr_url)"
+      # Si on arrive ici, l'humain a dit "c" → tuer le poll
+      kill "$poll_pid" 2>/dev/null || true
+      wait "$poll_pid" 2>/dev/null || true
+    else
+      # Mode nohup : poll multi-source (GitHub review + fichier local)
+      local wait_count=0
+      local max_wait=2880  # 24h à 30s d'intervalle
+      while [ $wait_count -lt $max_wait ]; do
+        # Source 1 : PR review sur GitHub
+        local review_state
+        review_state=$(gh pr view "$pr_number" \
+          --repo "$repo_slug" \
+          --json reviewDecision \
+          --jq '.reviewDecision' 2>/dev/null || echo "")
+        if [ "$review_state" = "APPROVED" ]; then
+          log INFO "GitHub: PR #$pr_number approuvée via review !"
+          break
+        fi
 
-      # Vérifier aussi les signaux locaux pour pouvoir quitter
-      if [ -f "$SCRIPT_DIR/.orc/stop-after-feature" ]; then
-        log WARN "Signal stop détecté pendant l'attente de review."
+        # Source 2 : fichier .orc/approve (contrôle local)
+        if [ -f "$SCRIPT_DIR/.orc/approve" ]; then
+          rm -f "$SCRIPT_DIR/.orc/approve"
+          log INFO "Approbation locale détectée (.orc/approve)"
+          break
+        fi
+
+        # Source 3 : signaux d'arrêt (pour pouvoir quitter)
+        if [ -f "$SCRIPT_DIR/.orc/stop-after-feature" ]; then
+          log WARN "Signal stop détecté pendant l'attente d'approbation."
+          return 1
+        fi
+
+        # Source 4 : signaux GitHub
+        gh_check_signals
+        if [ -f "$SCRIPT_DIR/.orc/pause-requested" ] || [ -f "$SCRIPT_DIR/.orc/stop-after-feature" ]; then
+          log WARN "Signal GitHub détecté pendant l'attente d'approbation."
+          return 1
+        fi
+
+        sleep 30
+        wait_count=$((wait_count + 1))
+      done
+
+      if [ $wait_count -ge $max_wait ]; then
+        log ERROR "Timeout (24h) en attente d'approbation pour PR #$pr_number."
         return 1
       fi
-
-      sleep 30
-      wait_count=$((wait_count + 1))
-    done
-
-    if [ $wait_count -ge $max_wait ]; then
-      log ERROR "GitHub: timeout (24h) en attente de review pour PR #$pr_number."
-      return 1
     fi
   fi
 
-  # Merge
+  # Merge via GitHub
   gh pr merge "$pr_number" \
     --repo "$repo_slug" \
     --merge \
@@ -751,10 +790,29 @@ gh_merge_pr() {
   }
 
   # Synchroniser le main local
-  run_in_project "git checkout main 2>/dev/null && git pull '$GITHUB_REMOTE' main 2>/dev/null || true"
+  run_in_project "git checkout main 2>/dev/null && git pull '${GITHUB_REMOTE:-origin}' main 2>/dev/null || true"
 
   log INFO "GitHub: PR #$pr_number mergée et branche supprimée."
+  rm -f "$SCRIPT_DIR/.orc/approve"
   return 0
+}
+
+# Helper interne : poll GitHub pour approval en background (utilisé en mode interactif)
+_gh_poll_approval() {
+  local pr_number="$1" repo_slug="$2"
+  while true; do
+    local review_state
+    review_state=$(gh pr view "$pr_number" \
+      --repo "$repo_slug" \
+      --json reviewDecision \
+      --jq '.reviewDecision' 2>/dev/null || echo "")
+    if [ "$review_state" = "APPROVED" ]; then
+      # Créer le signal pour que human_pause puisse détecter
+      touch "$SCRIPT_DIR/.orc/approve"
+      return 0
+    fi
+    sleep 30
+  done
 }
 
 # Vérifie les signaux GitHub (labels sur la tracking issue)
@@ -1081,8 +1139,16 @@ human_pause() {
   echo ""
 
   while true; do
-    read -rp "→ " choice
+    # Vérifier si un signal externe (GitHub review ou fichier) débloque la pause
+    if [ -f "$SCRIPT_DIR/.orc/approve" ]; then
+      rm -f "$SCRIPT_DIR/.orc/approve"
+      printf "\n  ${GREEN}Approbation reçue (signal externe).${NC}\n"
+      return 0
+    fi
+    # read avec timeout de 5s pour pouvoir vérifier les signaux régulièrement
+    read -t 5 -rp "→ " choice || { choice=""; continue; }
     case "$choice" in
+      "") continue ;;
       c|C) return 0 ;;
       r|R) cat "$PROJECT_DIR/ROADMAP.md" 2>/dev/null || echo "Pas de ROADMAP." ; echo "" ;;
       l|L) tail -30 "$LOG_DIR/orchestrator.log" 2>/dev/null ; echo "" ;;
