@@ -35,6 +35,14 @@ GITHUB_SIGNALS=false                     # Lire les labels GitHub comme signaux 
                                          # Labels attendus : "orc:pause", "orc:stop", "orc:continue"
                                          # Les signaux locaux (.orc/pause-requested etc.) marchent toujours.
 GITHUB_REMOTE="origin"                   # Remote Git pour push/PR (défaut: origin)
+GITHUB_SYNC_ROADMAP=false                # Miroir ROADMAP.md → GitHub Issues (push-only)
+                                         # Crée/ferme des issues, ne lit jamais les issues comme source.
+GITHUB_FEEDBACK=false                    # Lire les commentaires GitHub (tracking issue) comme feedback additionnel
+                                         # Ajouté aux notes mid-run, en plus de .orc/human-notes.md
+GITHUB_CI=false                          # Valider le CI distant (GitHub Actions) en plus des tests locaux
+                                         # Les tests locaux font toujours foi. CI distant = validation bonus.
+GITHUB_RELEASES=false                    # Créer une GitHub Release après chaque meta-rétro / fin de projet
+                                         # Changelog auto-généré + cost summary
 
 # === NOTIFICATIONS ===
 NOTIFY_COMMAND=""                        # Commande de notification (vide = désactivé)

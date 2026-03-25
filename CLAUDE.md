@@ -111,8 +111,15 @@ Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `INDEX.md` existe
 - **Signaux GitHub** : `GITHUB_SIGNALS=true` lit les labels `orc:pause`, `orc:stop`, `orc:continue`. Les signaux locaux (`.orc/`) fonctionnent toujours, GitHub est un canal additionnel.
 - **Approbation multi-source** : terminal (`c`), fichier local (`touch .orc/approve`), ou PR review GitHub. Premier arrivé gagne.
 - **Features abandonnées** : auto-création d'une issue "bug" avec les fix-reflections (si `gh` disponible).
+- **Roadmap sync** : `GITHUB_SYNC_ROADMAP=true` miroir push-only de ROADMAP.md → GitHub Issues. Crée/ferme les issues. L'orchestrateur ne lit jamais les issues comme source de features. Mapping dans `.orc/roadmap-issues.map`.
+- **Milestones** : `gh_sync_milestone()` crée un milestone par epic. Appelé au reset du compteur epic.
+- **Feedback GitHub** : `GITHUB_FEEDBACK=true` lit les commentaires humains sur la tracking issue et les injecte dans le prompt (en plus des notes locales).
+- **CI distant** : `GITHUB_CI=true` attend les checks GitHub Actions après la quality gate. Non-bloquant — les tests locaux font toujours foi. Poste aussi la quality gate comme commit status.
+- **Releases** : `GITHUB_RELEASES=true` crée une release après chaque meta-rétro (`v0.N.0`) et en fin de projet (`v1.0.0`). Changelog auto-généré.
 - **Dégradation gracieuse** : `gh` absent → tout fonctionne en local sans erreur.
-- Fonctions : `gh_available()`, `gh_pr_mode()`, `gh_create_tracking_issue()`, `gh_create_pr()`, `gh_merge_pr()`, `gh_comment()`, `gh_check_signals()`, `gh_create_abandoned_issue()`, `gh_close_tracking_issue()`.
+- Fonctions Phase 1 : `gh_available()`, `gh_pr_mode()`, `gh_create_tracking_issue()`, `gh_create_pr()`, `gh_merge_pr()`, `gh_comment()`, `gh_check_signals()`, `gh_create_abandoned_issue()`, `gh_close_tracking_issue()`.
+- Fonctions Phase 2 : `gh_sync_roadmap()`, `gh_sync_milestone()`, `gh_read_feedback()`.
+- Fonctions Phase 3 : `gh_wait_ci()`, `gh_post_quality_status()`, `gh_create_release()`.
 
 ### Détection de boucle fix
 `error_hash()` compare les erreurs entre tentatives. Même erreur 2x → prompt "change d'approche". 3x → abandon anticipé.

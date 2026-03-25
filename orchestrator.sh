@@ -923,6 +923,274 @@ gh_close_tracking_issue() {
   rm -f "$SCRIPT_DIR/.orc/tracking-issue"
 }
 
+# === PHASE 2 : ROADMAP SYNC (local → GitHub Issues, push-only) ===
+
+# Synchronise ROADMAP.md vers GitHub Issues.
+# Crée une issue par feature non cochée, ferme les issues des features cochées.
+# Ne lit JAMAIS les issues comme source de features.
+gh_sync_roadmap() {
+  if ! gh_available || [ "${GITHUB_SYNC_ROADMAP:-false}" != "true" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+  if [ -z "$repo_slug" ]; then return 1; fi
+
+  local roadmap="$PROJECT_DIR/ROADMAP.md"
+  if [ ! -f "$roadmap" ]; then return 0; fi
+
+  # Fichier de mapping local : feature_name → issue_number
+  local map_file="$SCRIPT_DIR/.orc/roadmap-issues.map"
+  touch "$map_file"
+
+  # Sync features non cochées → créer les issues manquantes
+  while IFS= read -r line; do
+    local feature_name
+    feature_name=$(echo "$line" | sed 's/^- \[ \] //')
+    [ -z "$feature_name" ] && continue
+
+    # Déjà mappée ?
+    if grep -qF "$feature_name" "$map_file" 2>/dev/null; then
+      continue
+    fi
+
+    # Créer l'issue
+    local issue_url
+    issue_url=$(gh issue create \
+      --repo "$repo_slug" \
+      --title "$feature_name" \
+      --body "Feature de la roadmap ORC.
+_Miroir automatique de ROADMAP.md — ne pas modifier cette issue._" \
+      --label "orc-feature" 2>/dev/null) || {
+      # Retry sans label
+      issue_url=$(gh issue create \
+        --repo "$repo_slug" \
+        --title "$feature_name" \
+        --body "Feature de la roadmap ORC." 2>/dev/null) || continue
+    }
+
+    local issue_num
+    issue_num=$(echo "$issue_url" | grep -oE '[0-9]+$')
+    echo "$feature_name	$issue_num" >> "$map_file"
+    log INFO "GitHub: issue #$issue_num créée pour '$feature_name'"
+  done < <(grep '^\- \[ \]' "$roadmap" 2>/dev/null || true)
+
+  # Sync features cochées → fermer les issues correspondantes
+  while IFS= read -r line; do
+    local feature_name
+    feature_name=$(echo "$line" | sed 's/^- \[x\] //')
+    [ -z "$feature_name" ] && continue
+
+    # Trouver l'issue mappée
+    local issue_num
+    issue_num=$(grep -F "$feature_name" "$map_file" 2>/dev/null | tail -1 | cut -f2)
+    [ -z "$issue_num" ] && continue
+
+    # Fermer si pas déjà fermée
+    local state
+    state=$(gh issue view "$issue_num" \
+      --repo "$repo_slug" \
+      --json state --jq '.state' 2>/dev/null || echo "")
+    if [ "$state" = "OPEN" ]; then
+      gh issue close "$issue_num" \
+        --repo "$repo_slug" \
+        --comment "Fermée automatiquement — feature mergée." &>/dev/null || true
+      log INFO "GitHub: issue #$issue_num fermée (feature terminée)"
+    fi
+  done < <(grep '^\- \[x\]' "$roadmap" 2>/dev/null || true)
+}
+
+# Crée un milestone GitHub pour un epic (groupe de features)
+gh_sync_milestone() {
+  local epic_name="$1"
+
+  if ! gh_available || [ "${GITHUB_SYNC_ROADMAP:-false}" != "true" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+  if [ -z "$repo_slug" ]; then return 1; fi
+
+  # Vérifier si le milestone existe déjà
+  local existing
+  existing=$(gh api "repos/$repo_slug/milestones" \
+    --jq ".[] | select(.title==\"$epic_name\") | .number" 2>/dev/null || echo "")
+
+  if [ -n "$existing" ]; then
+    echo "$existing"
+    return 0
+  fi
+
+  # Créer le milestone
+  local milestone_num
+  milestone_num=$(gh api "repos/$repo_slug/milestones" \
+    -f title="$epic_name" \
+    -f description="Epic ORC — groupe de $EPIC_SIZE features" \
+    --jq '.number' 2>/dev/null || echo "")
+
+  if [ -n "$milestone_num" ]; then
+    log INFO "GitHub: milestone '$epic_name' créé (#$milestone_num)"
+    echo "$milestone_num"
+  fi
+}
+
+# === PHASE 2 : FEEDBACK GITHUB (lecture additive) ===
+
+# Lit les commentaires récents de la tracking issue comme feedback additionnel.
+# Ajouté au contenu de human-notes, ne remplace rien.
+gh_read_feedback() {
+  if ! gh_available || [ "${GITHUB_FEEDBACK:-false}" != "true" ] || [ -z "$TRACKING_ISSUE_NUMBER" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+
+  # Lire les commentaires récents (depuis le dernier check)
+  local last_check_file="$SCRIPT_DIR/.orc/gh-feedback-last-check"
+  local since=""
+  if [ -f "$last_check_file" ]; then
+    since=$(cat "$last_check_file")
+  fi
+
+  # Récupérer les commentaires
+  local comments
+  comments=$(gh api "repos/$repo_slug/issues/$TRACKING_ISSUE_NUMBER/comments" \
+    --jq '.[].body' 2>/dev/null || echo "")
+
+  if [ -z "$comments" ]; then return 0; fi
+
+  # Filtrer : ignorer les commentaires automatiques de l'orchestrateur (commencent par emoji)
+  local human_comments=""
+  while IFS= read -r comment; do
+    # Les commentaires auto commencent par ✅ ❌ 🚀 ⏳ 🏁 — les ignorer
+    if echo "$comment" | grep -qE '^(✅|❌|🚀|⏳|🏁|##)'; then
+      continue
+    fi
+    if [ -n "$comment" ]; then
+      human_comments="${human_comments}${comment}
+"
+    fi
+  done <<< "$comments"
+
+  if [ -n "$human_comments" ]; then
+    echo "
+FEEDBACK GITHUB (commentaires sur l'issue de tracking) :
+$human_comments"
+  fi
+
+  # Mettre à jour le timestamp
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$last_check_file"
+}
+
+# === PHASE 3 : CI GITHUB ACTIONS (validation bonus, jamais bloquante) ===
+
+# Attend le résultat du CI sur la branche courante (si GitHub Actions configuré).
+# Retourne 0 si CI pass ou pas de CI. Retourne 1 si CI fail.
+# N'est JAMAIS bloquant pour le merge — les tests locaux font foi.
+gh_wait_ci() {
+  local branch="$1"
+
+  if ! gh_available || [ "${GITHUB_CI:-false}" != "true" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+  local remote="${GITHUB_REMOTE:-origin}"
+
+  # S'assurer que la branche est poussée
+  run_in_project "git push '$remote' '$branch' 2>&1" || return 0
+
+  # Attendre les checks (timeout 10 min)
+  log INFO "GitHub CI: attente des checks sur '$branch'..."
+
+  local ci_result
+  ci_result=$(gh pr checks "$branch" \
+    --repo "$repo_slug" \
+    --watch \
+    --fail-fast 2>&1) && local ci_exit=0 || local ci_exit=$?
+
+  if [ $ci_exit -eq 0 ]; then
+    log INFO "GitHub CI: tous les checks passent."
+    gh_comment "🟢 CI OK sur \`$branch\`"
+    return 0
+  else
+    log WARN "GitHub CI: checks échoués (non-bloquant — les tests locaux font foi)."
+    gh_comment "🔴 CI échoué sur \`$branch\` (non-bloquant)
+\`\`\`
+$(echo "$ci_result" | tail -20)
+\`\`\`"
+    return 1
+  fi
+}
+
+# Poste le résultat de la quality gate comme commit status
+gh_post_quality_status() {
+  local state="$1" description="$2"
+
+  if ! gh_available || [ "${GITHUB_CI:-false}" != "true" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+  local sha
+  sha=$(run_in_project "git rev-parse HEAD 2>/dev/null" || echo "")
+  [ -z "$sha" ] && return 0
+
+  gh api "repos/$repo_slug/statuses/$sha" \
+    -f state="$state" \
+    -f description="$description" \
+    -f context="orc/quality-gate" &>/dev/null || true
+}
+
+# === PHASE 3 : GITHUB RELEASES (changelog auto-généré) ===
+
+# Crée une release GitHub après une meta-rétro ou en fin de projet.
+gh_create_release() {
+  local tag="$1" title="$2"
+
+  if ! gh_available || [ "${GITHUB_RELEASES:-false}" != "true" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+  local remote="${GITHUB_REMOTE:-origin}"
+
+  # S'assurer que main est poussé
+  run_in_project "git push '$remote' main 2>&1" || {
+    log WARN "GitHub: push main échoué — release non créée."
+    return 1
+  }
+
+  # Créer le tag
+  run_in_project "git tag '$tag' 2>/dev/null" || true
+  run_in_project "git push '$remote' '$tag' 2>&1" || true
+
+  # Générer les notes de release
+  local body
+  body="## $title
+
+**Features** : $FEATURE_COUNT | **Échecs** : $TOTAL_FAILURES | **Coût** : \$${TOTAL_COST_USD} USD
+
+### Changelog
+$(run_in_project "git log --oneline --no-decorate \$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD 2>/dev/null" || echo "Première release")"
+
+  gh release create "$tag" \
+    --repo "$repo_slug" \
+    --title "$title" \
+    --notes "$body" &>/dev/null || {
+    log WARN "GitHub: release '$tag' non créée."
+    return 1
+  }
+
+  log INFO "GitHub: release $tag créée."
+}
+
 # === HUMAN NOTES (instructions mid-run asynchrones) ===
 
 # Lit le fichier human-notes.md si présent et retourne son contenu
@@ -1370,6 +1638,7 @@ if ! grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
   run_claude "$local_prompt" 30 "$LOG_DIR/02-strategy.log" "strategy"
 
   log INFO "Roadmap générée."
+  gh_sync_roadmap
 fi
 
 # ============================================================
@@ -1435,6 +1704,15 @@ EOF
     impl_prompt="$impl_prompt
 $human_notes"
     log INFO "Notes humaines injectées dans le prompt."
+  fi
+
+  # Injecter le feedback GitHub (commentaires sur tracking issue) si activé
+  local gh_feedback
+  gh_feedback=$(gh_read_feedback)
+  if [ -n "$gh_feedback" ]; then
+    impl_prompt="$impl_prompt
+$gh_feedback"
+    log INFO "Feedback GitHub injecté dans le prompt."
   fi
 
   # Injecter le feedback humain de la feature précédente si présent
@@ -1589,7 +1867,15 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
       fi
     else
       log INFO "Quality gate OK."
+      gh_post_quality_status "success" "Quality gate passed"
     fi
+  fi
+
+  # --- CI distant (bonus, non-bloquant) ---
+  if [ "$tests_passed" = true ]; then
+    local ci_branch
+    ci_branch=$(run_in_project "git branch --show-current 2>/dev/null || echo ''")
+    gh_wait_ci "$ci_branch" || log WARN "CI distant échoué (non-bloquant)."
   fi
 
   # --- Merge si OK ---
@@ -1631,12 +1917,14 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
     log INFO "Feature '$feature_name' mergée."
     notify "Feature #$FEATURE_COUNT '$feature_name' mergée (\$$TOTAL_COST_USD)"
     gh_comment "✅ **Feature #$FEATURE_COUNT** : $feature_name — mergée (fix: $attempt, coût: \$${TOTAL_COST_USD})"
+    gh_sync_roadmap  # Fermer l'issue correspondante
   fi
 
   save_state
 
   # --- Reset compteur epic ---
   if [ "$EPIC_FEATURE_COUNT" -ge "$EPIC_SIZE" ]; then
+    gh_sync_milestone "Epic $(( (FEATURE_COUNT - 1) / EPIC_SIZE + 1 ))"
     EPIC_FEATURE_COUNT=0
   fi
 
@@ -1648,6 +1936,8 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
       log WARN "Méta-rétrospective échouée — on continue."
     }
     log INFO "Méta-rétrospective terminée."
+    gh_create_release "v0.$FEATURE_COUNT.0" "Meta-retro après $FEATURE_COUNT features"
+    gh_sync_roadmap
   fi
 
   # --- Pause humaine configurable ---
@@ -1816,6 +2106,8 @@ fi
 # BILAN FINAL
 # ============================================================
 
+gh_sync_roadmap
+gh_create_release "v1.0.0" "Projet terminé — $FEATURE_COUNT features"
 gh_close_tracking_issue
 
 log PHASE "TERMINÉ"
