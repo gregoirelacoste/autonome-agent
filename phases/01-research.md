@@ -41,6 +41,17 @@ Pour chaque section :
 3. Mets à jour research/INDEX.md (max 50 lignes, insights clés uniquement)
 
 Chaque insight doit se terminer par :
+**Confiance :** `high` | `medium` | `low`
+**Sources :** [nombre de sources qui confirment cet insight]
 **Impact produit :** ce qu'on devrait en faire concrètement.
 
+### 5. Cross-validation
+
+Pour chaque insight majeur (qui influence la stratégie produit) :
+- Confirme avec au moins 2 sources indépendantes
+- Si une seule source → marque `confidence: low`
+- Si les sources se contredisent → note les deux versions
+- Ne base JAMAIS une décision stratégique sur un insight `low confidence` seul
+
 IMPORTANT : cite toujours l'URL source exacte.
+IMPORTANT : les insights `low confidence` ne doivent PAS être utilisés seuls pour prioriser des features.

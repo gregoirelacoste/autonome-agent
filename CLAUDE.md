@@ -98,6 +98,37 @@ Substitue `{{VAR}}` dans les prompts. Attention : la substitution bash `${conten
 ### Reprise après crash
 Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `INDEX.md` existe ? → skip research. Features non-cochées dans ROADMAP ? → skip strategy. `state.json` → restaure les compteurs.
 
+### Contrôle humain mid-run
+- `.orc/human-notes.md` : lu et injecté dans le prompt avant chaque feature
+- `.orc/pause-requested` / `.orc/stop-after-feature` : signaux file-based pour le mode nohup
+- `logs/human-feedback-N.md` : feedback structuré, prioritaire sur les observations de l'IA
+
+### Détection de boucle fix
+`error_hash()` compare les erreurs entre tentatives. Même erreur 2x → prompt "change d'approche". 3x → abandon anticipé.
+
+### Quality gate
+`QUALITY_COMMAND` exécuté après tests, avant merge. Non-bloquant si échec après correction.
+
+### Mémoire inter-projets
+`learnings/` dans le template accumule les insights. Copiés dans le projet au bootstrap, lus par la phase 00.
+
+### Connaissance projet (codebase/ + stack-conventions.md)
+- `codebase/INDEX.md` : carte sémantique du projet (max 40 lignes). Lu AVANT chaque implémentation. Pointe vers les fichiers de détail.
+- `codebase/auto-map.md` : carte auto-générée par l'orchestrateur (grep des exports/classes). Vérité du code, pas maintenue par l'IA. Regénérée avant chaque feature.
+- `codebase/modules.md`, `utilities.md`, `integrations.md`, `data-models.md`, `architecture.md`, `security.md` : détail par domaine. L'IA ne lit que les fichiers pertinents pour la feature en cours.
+- `.claude/skills/stack-conventions.md` : conventions spécifiques à la stack (React, Astro, Java, etc.), patterns adoptés, anti-patterns, utilities réutilisables, patterns de sécurité. Auto-enrichi au fil du projet.
+
+### Réflexions structurées (pattern Reflexion)
+Après chaque échec de fix, l'IA écrit une réflexion structurée dans `logs/fix-reflections-N.md` (ce que j'ai tenté, pourquoi ça a échoué, ce que je dois essayer). Ces réflexions sont injectées dans les tentatives suivantes.
+
+### Contexte adaptatif par phase
+`run_claude()` injecte un contexte différent selon la phase :
+- implement → INDEX.md + auto-map.md + fichiers de détail pertinents + stack-conventions.md
+- fix → auto-map.md + security.md + réflexions passées
+- strategy → INDEX.md + architecture.md + research/INDEX.md
+- reflect → auto-map.md (vérité) + INDEX.md + fichiers de détail à mettre à jour
+- meta-retro → INDEX.md + auto-map.md + audit de cohérence de tous les fichiers
+
 ## Roadmap
 
 Les items de roadmap sont des fichiers `.md` individuels dans `roadmap/`.

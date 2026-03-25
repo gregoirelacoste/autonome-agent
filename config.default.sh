@@ -21,6 +21,13 @@ META_RETRO_FREQUENCY=5                   # Méta-rétrospective toutes les N fea
 PAUSE_EVERY_N_FEATURES=0                 # Pause humaine toutes les N features (0 = jamais)
 REQUIRE_HUMAN_APPROVAL=false             # true = attend validation avant chaque merge
 AUTO_EVOLVE_ROADMAP=true                 # Claude peut ajouter des features à la roadmap
+MAX_EVOLVE_CYCLES=2                      # Nombre max de cycles evolve (0 = illimité)
+MAX_AI_ROADMAP_ADDS=5                    # Max features ajoutées par l'IA entre deux pauses humaines
+
+# === NOTIFICATIONS ===
+NOTIFY_COMMAND=""                        # Commande de notification (vide = désactivé)
+                                         # Ex: "notify-send 'ORC'" ou "curl -X POST https://slack.webhook/..."
+                                         # Recevra le message en argument : $NOTIFY_COMMAND "message"
 
 # === RECHERCHE ===
 ENABLE_RESEARCH=true                     # Activer la veille marché
@@ -33,6 +40,8 @@ BUILD_COMMAND="npm run build"            # Commande de build
 TEST_COMMAND="npx playwright test"       # Commande de test
 DEV_COMMAND="npm run dev"                # Commande serveur dev
 LINT_COMMAND="npm run lint"              # Commande lint (vide = désactivé)
+QUALITY_COMMAND=""                       # Commande quality gate post-tests (vide = désactivé)
+                                         # Ex: "npm run lighthouse -- --budget=80" ou "npx bundle-size-check"
 CLAUDE_MODEL=""                          # Modèle Claude (vide = défaut CLI). Ex: "claude-sonnet-4-6-20250514"
 
 # === BUDGET ===
