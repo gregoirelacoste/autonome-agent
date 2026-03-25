@@ -1,5 +1,10 @@
 Tu démarres un nouveau projet autonome.
 
+0. Si le dossier `learnings/` contient des fichiers, lis-les.
+   Ce sont les apprentissages des projets précédents.
+   Intègre les règles et pièges pertinents dans ton CLAUDE.md initial.
+   Ne copie pas aveuglément — adapte au contexte de CE projet.
+
 1. Lis BRIEF.md pour comprendre le contexte, la vision et les contraintes.
 
 2. Initialise le projet technique :

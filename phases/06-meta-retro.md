@@ -1,6 +1,8 @@
 MÉTA-RÉTROSPECTIVE — {{FEATURE_COUNT}} features complétées.
 
 Lis tous les fichiers logs/retrospective-*.md et analyse les tendances.
+Lis AUSSI tous les fichiers logs/human-feedback-*.md — le feedback humain
+est PRIORITAIRE et doit influencer tes décisions de repriorisation.
 
 ### 1. Rétro technique
 - Quels types d'erreurs reviennent le plus ?

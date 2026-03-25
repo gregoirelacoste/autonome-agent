@@ -266,7 +266,7 @@ Feature 15 : plateau → les améliorations deviennent marginales
 
 ## Configuration — Intervention humaine
 
-Tout est configurable en haut de l'orchestrateur :
+Tout est configurable dans `.orc/config.sh` :
 
 ```bash
 # === GARDE-FOUS ===
@@ -275,28 +275,110 @@ MAX_FEATURES=50                 # Nombre total de features avant arrêt
 MAX_TURNS_PER_INVOCATION=50     # Limite de turns par appel Claude
 
 # === RYTHME ===
-RESEARCH_FREQUENCY=5            # Veille tendances toutes les N features
+META_RETRO_FREQUENCY=5          # Méta-rétrospective toutes les N features
 EPIC_SIZE=3                     # Nombre de features par epic
 
 # === INTERVENTION HUMAINE ===
-MAX_FEATURES_BEFORE_PAUSE=10    # Pause humaine toutes les N features
+PAUSE_EVERY_N_FEATURES=0        # Pause humaine toutes les N features (0 = jamais)
 REQUIRE_HUMAN_APPROVAL=false    # true = attend validation avant merge
 AUTO_EVOLVE_ROADMAP=true        # Claude peut ajouter des features seul
+MAX_EVOLVE_CYCLES=2             # Nombre max de cycles evolve (0 = illimité)
+MAX_AI_ROADMAP_ADDS=5           # Max features ajoutées par l'IA avant pause
+
+# === NOTIFICATIONS ===
+NOTIFY_COMMAND=""               # Commande de notification (ex: notify-send, slack webhook)
 
 # === RECHERCHE ===
 MAX_TURNS_RESEARCH_INITIAL=80   # Budget recherche initiale
 MAX_TURNS_RESEARCH_EPIC=40      # Budget veille ciblée par epic
 MAX_TURNS_RESEARCH_TREND=50     # Budget veille tendances
+
+# === TECHNIQUE ===
+QUALITY_COMMAND=""               # Quality gate post-tests (ex: lighthouse, bundle-size)
 ```
 
 **Modes d'utilisation :**
 
 | Mode | Config | Comportement |
 |---|---|---|
-| **Pilote auto** | `REQUIRE_HUMAN_APPROVAL=false` | Totalement autonome |
+| **Pilote auto** | `PAUSE_EVERY_N_FEATURES=0` | Totalement autonome |
 | **Copilote** | `REQUIRE_HUMAN_APPROVAL=true` | Claude code, humain valide les merges |
-| **Supervisé** | `MAX_FEATURES_BEFORE_PAUSE=3` | Pause fréquente pour check humain |
+| **Supervisé** | `PAUSE_EVERY_N_FEATURES=3` | Pause fréquente pour check humain |
 | **Recherche seule** | Lancer uniquement phases 1-2 | Veille + roadmap sans code |
+
+---
+
+## Mécaniques de contrôle humain
+
+### Human Notes (instructions mid-run)
+
+L'humain peut écrire dans `.orc/human-notes.md` à tout moment. Le contenu est
+injecté dans le prompt d'implémentation de la prochaine feature. Permet de
+rediriger l'IA sans arrêter l'agent.
+
+Accessible aussi via l'option `n` dans `human_pause()`.
+
+### Feedback structuré
+
+À chaque checkpoint (`human_pause`), l'humain peut laisser un feedback (`f`)
+sur la dernière feature. Stocké dans `logs/human-feedback-N.md`, lu par :
+- La phase reflect (prioritaire sur les observations de l'IA)
+- La méta-rétrospective (influence les décisions de repriorisation)
+- Le prompt d'implémentation de la feature suivante
+
+### Diff & Summary à l'approbation
+
+Options `d` (diff) et `s` (summary) dans `human_pause()` pour voir le code
+changé et le résumé de la rétrospective avant d'approuver un merge.
+
+### Signaux file-based (mode nohup)
+
+Quand l'agent tourne en background, l'humain peut déposer des fichiers dans `.orc/` :
+- `.orc/pause-requested` → pause au prochain checkpoint (attend `.orc/continue` pour reprendre)
+- `.orc/stop-after-feature` → arrêt propre après la feature en cours
+
+### Notifications
+
+`NOTIFY_COMMAND` dans config.sh : commande shell appelée sur les événements critiques :
+- Feature mergée, feature abandonnée, quality gate échouée
+- Budget proche de la limite, pause humaine, projet terminé
+- L'IA a ajouté trop de features à la roadmap
+
+### Garde-fous sur l'évolution
+
+- `MAX_EVOLVE_CYCLES=2` — limite les cycles d'auto-extension de la roadmap
+- `MAX_AI_ROADMAP_ADDS=5` — force une pause humaine si l'IA ajoute trop de features
+- Chaque feature ajoutée par l'IA doit citer la section du BRIEF qu'elle sert
+
+---
+
+## Mécaniques d'autonomie de l'IA
+
+### Détection de boucle de fix
+
+Le test-fix loop compare le hash des erreurs entre tentatives :
+- Même erreur 2x → prompt "change d'approche radicalement"
+- Même erreur 3x → abandon anticipé (évite le gaspillage de tokens)
+
+### Quality Gate
+
+`QUALITY_COMMAND` optionnel, exécuté après les tests et avant le merge.
+Si échec → l'IA tente une correction. Si toujours en échec → merge quand même
+(non-bloquant) avec notification. Exemples : lighthouse, bundle-size, coverage.
+
+### Cross-validation de la recherche
+
+Chaque insight de la phase research doit indiquer :
+- `confidence: high | medium | low`
+- Nombre de sources indépendantes qui le confirment
+- Les insights `low confidence` ne peuvent pas servir seuls à prioriser des features
+
+### Mémoire inter-projets (learnings/)
+
+Le dossier `learnings/` dans le template accumule les apprentissages :
+- À la fin du projet, `orchestrator-improvements.md` est copié dans `learnings/`
+- Au bootstrap d'un nouveau projet, l'IA lit les learnings existants
+- Les règles et pièges pertinents sont intégrés dans le CLAUDE.md initial
 
 ---
 
@@ -327,9 +409,12 @@ project/
 │   ├── user-needs/
 │   └── regulations/
 │
+├── learnings/                  # Apprentissages inter-projets (copiés du template)
+│
 ├── logs/                       # Historique des rétrospectives
 │   ├── retrospective-N.md
-│   └── meta-retrospective-N.md
+│   ├── meta-retrospective-N.md
+│   └── human-feedback-N.md     # Feedback humain par feature
 │
 ├── e2e/                        # Tests Playwright
 │   └── *.spec.ts
@@ -343,17 +428,20 @@ project/
 
 | Risque | Protection |
 |---|---|
-| Boucle infinie de fix | `MAX_FIX_ATTEMPTS` puis abandon de la feature |
-| Roadmap infinie | `MAX_FEATURES` + DONE.md |
+| Boucle infinie de fix | `MAX_FIX_ATTEMPTS` + détection de boucle (hash erreur) |
+| Roadmap infinie | `MAX_FEATURES` + `MAX_EVOLVE_CYCLES` + DONE.md |
+| IA ajoute trop de features | `MAX_AI_ROADMAP_ADDS` force une pause humaine |
 | CLAUDE.md trop long | Nettoyage forcé à chaque méta-rétro |
 | Recherche sans fin | Max turns par phase de recherche |
+| Recherche non fiable | Cross-validation + score de confiance |
 | Infos obsolètes | Fichiers datés, élagage > 3 mois |
-| Dérive vs vision | BRIEF.md immuable, vérifié aux méta-rétros |
-| Coût tokens | `--max-turns` par invocation |
-| Régression code | Tests E2E complets relancés à chaque feature |
+| Dérive vs vision | BRIEF.md immuable, vérifié aux méta-rétros + evolve |
+| Coût tokens | `--max-turns` par invocation + `MAX_BUDGET_USD` |
+| Régression qualité | Tests E2E + `QUALITY_COMMAND` optionnel |
 | Auto-modification destructive | Git versionne tout, rollback possible |
-| Hallucination de sources | Règle : toujours citer l'URL exacte |
-| Absence de l'humain | `MAX_FEATURES_BEFORE_PAUSE` force un checkpoint |
+| Hallucination de sources | Règle : URL exacte + cross-validation 2 sources |
+| Absence de l'humain | `PAUSE_EVERY_N_FEATURES` + signaux file-based + notifications |
+| Perte de contexte inter-projets | `learnings/` accumule les apprentissages |
 
 ---
 
@@ -394,7 +482,7 @@ watch -n 30 'grep -c "\[x\]" project/ROADMAP.md'
   Les features qu'il propose seront des variations de ce qui existe, pas des innovations.
 - **Plateau d'auto-amélioration** : après ~15 features, les leçons apprises
   deviennent marginales. Le modèle sous-jacent ne change pas.
-- **Pas de feedback utilisateur réel** : peut lire les forums mais ne peut pas
-  faire de user testing ni observer de vrais utilisateurs.
+- **Feedback humain indirect** : l'humain peut donner du feedback structuré
+  via `human_pause` ou `.orc/human-notes.md`, mais pas de user testing réel.
 - **Coût** : chaque feature complète (veille + impl + tests + reflect)
   consomme environ 50-100K tokens. Un projet de 30 features ~= 2-3M tokens.

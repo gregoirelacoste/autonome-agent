@@ -1,6 +1,9 @@
 PHASE RÉTROSPECTIVE — Feature terminée : {{FEATURE_NAME}}
 Tests passés : {{TESTS_PASSED}} | Tentatives de fix : {{FIX_ATTEMPTS}}
 
+Si un fichier logs/human-feedback-*.md existe pour une feature récente,
+lis-le attentivement. Le feedback humain est PRIORITAIRE sur tes propres observations.
+
 Analyse cette itération et améliore ton workflow :
 
 1. **CLAUDE.md** — Ajoute des règles si tu as rencontré des pièges

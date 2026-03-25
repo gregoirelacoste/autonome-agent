@@ -39,6 +39,8 @@ NC='\033[0m'
 FEATURE_COUNT=0
 EPIC_FEATURE_COUNT=0
 TOTAL_FAILURES=0
+EVOLVE_CYCLES=0
+AI_ROADMAP_ADDS=0
 STATE_FILE="$SCRIPT_DIR/.orc/state.json"
 
 # === TRACKING TOKENS ===
@@ -97,7 +99,7 @@ log() {
 save_state() {
   mkdir -p "$(dirname "$STATE_FILE")"
   cat > "$STATE_FILE" << STATEEOF
-{"feature_count":$FEATURE_COUNT,"epic_feature_count":$EPIC_FEATURE_COUNT,"total_failures":$TOTAL_FAILURES}
+{"feature_count":$FEATURE_COUNT,"epic_feature_count":$EPIC_FEATURE_COUNT,"total_failures":$TOTAL_FAILURES,"evolve_cycles":$EVOLVE_CYCLES,"ai_roadmap_adds":$AI_ROADMAP_ADDS}
 STATEEOF
 }
 
@@ -107,7 +109,9 @@ restore_state() {
     FEATURE_COUNT=$(jq -r '.feature_count // 0' "$STATE_FILE")
     EPIC_FEATURE_COUNT=$(jq -r '.epic_feature_count // 0' "$STATE_FILE")
     TOTAL_FAILURES=$(jq -r '.total_failures // 0' "$STATE_FILE")
-    log INFO "État restauré : features=$FEATURE_COUNT, échecs=$TOTAL_FAILURES"
+    EVOLVE_CYCLES=$(jq -r '.evolve_cycles // 0' "$STATE_FILE")
+    AI_ROADMAP_ADDS=$(jq -r '.ai_roadmap_adds // 0' "$STATE_FILE")
+    log INFO "État restauré : features=$FEATURE_COUNT, échecs=$TOTAL_FAILURES, evolve_cycles=$EVOLVE_CYCLES"
   fi
 }
 
@@ -457,6 +461,96 @@ run_in_project() {
   ( cd "$PROJECT_DIR" && eval "$@" )
 }
 
+# === NOTIFICATIONS ===
+
+notify() {
+  local message="$1"
+  if [ -n "${NOTIFY_COMMAND:-}" ]; then
+    eval "$NOTIFY_COMMAND \"[ORC] $message\"" 2>/dev/null || log WARN "Notification échouée."
+  fi
+}
+
+# === SIGNAUX FILE-BASED (mode nohup) ===
+
+# Vérifie les fichiers de signal déposés par l'humain
+check_signals() {
+  local signal_dir="$SCRIPT_DIR/.orc"
+
+  # Signal : pause demandée
+  if [ -f "$signal_dir/pause-requested" ]; then
+    rm -f "$signal_dir/pause-requested"
+    log INFO "Signal pause-requested détecté."
+    if [ -t 0 ]; then
+      human_pause "Pause demandée via fichier signal"
+    else
+      log WARN "Pause demandée mais pas de terminal — l'agent attend un signal continue."
+      notify "Pause demandée — en attente de .orc/continue"
+      # Attente active d'un fichier continue
+      while [ ! -f "$signal_dir/continue" ]; do
+        sleep 5
+      done
+      rm -f "$signal_dir/continue"
+      log INFO "Signal continue reçu — reprise."
+    fi
+  fi
+
+  # Signal : arrêt après la feature en cours
+  if [ -f "$signal_dir/stop-after-feature" ]; then
+    rm -f "$signal_dir/stop-after-feature"
+    log INFO "Signal stop-after-feature détecté — arrêt propre après cette feature."
+    notify "Arrêt propre demandé — finit la feature en cours."
+    save_state
+    print_cost_summary
+    exit 0
+  fi
+}
+
+# === HUMAN NOTES (instructions mid-run asynchrones) ===
+
+# Lit le fichier human-notes.md si présent et retourne son contenu
+read_human_notes() {
+  local notes_file="$SCRIPT_DIR/.orc/human-notes.md"
+  if [ -f "$notes_file" ] && [ -s "$notes_file" ]; then
+    local content
+    content=$(cat "$notes_file")
+    echo "
+
+NOTES DE L'HUMAIN (lire attentivement et prendre en compte) :
+$content"
+  fi
+}
+
+# === FIX LOOP DETECTION ===
+
+LAST_ERROR_HASH=""
+
+# Compare l'erreur courante avec la précédente pour détecter les boucles
+error_hash() {
+  local output="$1"
+  echo "$output" | head -20 | md5sum | cut -d' ' -f1
+}
+
+# === QUALITY GATE ===
+
+run_quality_gate() {
+  if [ -z "${QUALITY_COMMAND:-}" ]; then
+    return 0
+  fi
+
+  log INFO "Quality gate en cours..."
+  local quality_output quality_exit
+  quality_output=$(run_in_project "$QUALITY_COMMAND 2>&1") && quality_exit=0 || quality_exit=$?
+
+  if [ $quality_exit -ne 0 ]; then
+    log WARN "Quality gate échouée (exit $quality_exit)"
+    echo "$quality_output"
+    return 1
+  fi
+
+  log INFO "Quality gate OK."
+  return 0
+}
+
 # Pause pour intervention humaine
 human_pause() {
   # Si stdin n'est pas un terminal (mode nohup), skip la pause
@@ -467,6 +561,7 @@ human_pause() {
 
   local reason="$1"
   log PHASE "PAUSE HUMAINE — $reason"
+  notify "Pause humaine : $reason (features: $FEATURE_COUNT, coût: \$$TOTAL_COST_USD)"
   echo ""
   printf "${YELLOW}═══════════════════════════════════════════════════${NC}\n"
   printf "${YELLOW}  PAUSE — Intervention humaine requise${NC}\n"
@@ -480,6 +575,10 @@ human_pause() {
   printf "    ${GREEN}r${NC} — voir la roadmap\n"
   printf "    ${GREEN}l${NC} — voir les logs récents\n"
   printf "    ${GREEN}t${NC} — voir les tokens consommés\n"
+  printf "    ${GREEN}d${NC} — voir le diff de la dernière feature\n"
+  printf "    ${GREEN}s${NC} — voir le résumé de la dernière feature\n"
+  printf "    ${GREEN}f${NC} — laisser un feedback sur la dernière feature\n"
+  printf "    ${GREEN}n${NC} — écrire des notes pour l'IA (instructions mid-run)\n"
   printf "    ${GREEN}q${NC} — quitter\n"
   echo ""
 
@@ -490,6 +589,85 @@ human_pause() {
       r|R) cat "$PROJECT_DIR/ROADMAP.md" 2>/dev/null || echo "Pas de ROADMAP." ; echo "" ;;
       l|L) tail -30 "$LOG_DIR/orchestrator.log" 2>/dev/null ; echo "" ;;
       t|T) print_cost_summary ;;
+      d|D)
+        # Diff de la dernière feature mergée
+        echo ""
+        printf "${CYAN}  Diff de la dernière feature :${NC}\n"
+        run_in_project "git diff HEAD~1 --stat 2>/dev/null" || echo "  Pas de diff disponible."
+        echo ""
+        run_in_project "git diff HEAD~1 2>/dev/null" | head -100
+        local diff_lines
+        diff_lines=$(run_in_project "git diff HEAD~1 2>/dev/null" | wc -l)
+        if [ "$diff_lines" -gt 100 ]; then
+          echo "  ... ($diff_lines lignes au total, tronqué à 100)"
+        fi
+        echo ""
+        ;;
+      s|S)
+        # Résumé de la dernière feature (log de reflect)
+        echo ""
+        printf "${CYAN}  Résumé de la dernière feature :${NC}\n"
+        local summary_file="$LOG_DIR/feature-$FEATURE_COUNT-reflect.log"
+        if [ -f "$summary_file" ]; then
+          cat "$summary_file"
+        else
+          echo "  Pas de résumé disponible."
+        fi
+        echo ""
+        ;;
+      f|F)
+        # Feedback humain structuré
+        echo ""
+        printf "${CYAN}  Feedback sur la feature #$FEATURE_COUNT :${NC}\n"
+        printf "  (Tapez votre feedback, puis une ligne vide pour terminer)\n"
+        echo ""
+        local feedback=""
+        local line
+        while IFS= read -rp "  > " line; do
+          [ -z "$line" ] && break
+          feedback="$feedback$line
+"
+        done
+        if [ -n "$feedback" ]; then
+          local feedback_file="$PROJECT_DIR/logs/human-feedback-$FEATURE_COUNT.md"
+          mkdir -p "$PROJECT_DIR/logs"
+          cat > "$feedback_file" << FBEOF
+# Feedback humain — Feature #$FEATURE_COUNT
+Date : $(date '+%Y-%m-%d %H:%M:%S')
+
+$feedback
+FBEOF
+          log INFO "Feedback enregistré : $feedback_file"
+          printf "  ${GREEN}Feedback enregistré.${NC}\n"
+        fi
+        echo ""
+        ;;
+      n|N)
+        # Notes mid-run pour l'IA
+        echo ""
+        printf "${CYAN}  Notes pour l'IA (sera lu avant la prochaine feature) :${NC}\n"
+        printf "  (Tapez vos instructions, puis une ligne vide pour terminer)\n"
+        echo ""
+        local notes=""
+        local nline
+        while IFS= read -rp "  > " nline; do
+          [ -z "$nline" ] && break
+          notes="$notes$nline
+"
+        done
+        if [ -n "$notes" ]; then
+          local notes_file="$SCRIPT_DIR/.orc/human-notes.md"
+          # Append pour accumuler les notes
+          {
+            echo ""
+            echo "## $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "$notes"
+          } >> "$notes_file"
+          log INFO "Notes enregistrées dans .orc/human-notes.md"
+          printf "  ${GREEN}Notes enregistrées — l'IA les lira à la prochaine feature.${NC}\n"
+        fi
+        echo ""
+        ;;
       q|Q) log INFO "Arrêt demandé par l'utilisateur." ; print_cost_summary ; exit 0 ;;
       *) echo "Choix invalide." ;;
     esac
@@ -571,6 +749,16 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
            "$PROJECT_DIR/research/regulations" \
            "$PROJECT_DIR/logs"
 
+  # Copier les learnings inter-projets si disponibles
+  if compgen -G "$SCRIPT_DIR/learnings/*.md" > /dev/null 2>&1; then
+    mkdir -p "$PROJECT_DIR/learnings"
+    for learning in "$SCRIPT_DIR/learnings/"*.md; do
+      local dest="$PROJECT_DIR/learnings/$(basename "$learning")"
+      [ ! -f "$dest" ] && cp "$learning" "$dest"
+    done
+    log INFO "Learnings inter-projets copiés ($(ls -1 "$SCRIPT_DIR/learnings/"*.md 2>/dev/null | wc -l) fichiers)."
+  fi
+
   mkdir -p "$PROJECT_DIR/.claude/skills"
   if compgen -G "$SCRIPT_DIR/skills-templates/*.md" > /dev/null 2>&1; then
     for skill in "$SCRIPT_DIR/skills-templates/"*.md; do
@@ -637,6 +825,9 @@ while [ $FEATURE_COUNT -lt $MAX_FEATURES ]; do
 
   log PHASE "FEATURE #$FEATURE_COUNT : $feature_name"
 
+  # --- Vérifier les signaux humains ---
+  check_signals
+
   # --- S'assurer qu'on est sur main avant de commencer ---
   run_in_project "git checkout main 2>/dev/null || true"
 
@@ -656,16 +847,38 @@ EOF
     }
   fi
 
-  # --- Implémentation ---
+  # --- Implémentation (avec human notes + feedback de la feature précédente) ---
   log INFO "Implémentation en cours..."
   impl_prompt=$(render_phase "03-implement.md" \
     "FEATURE_NAME=$feature_name" \
     "FEATURE_BRANCH=$feature_branch")
+
+  # Injecter les notes humaines mid-run si présentes
+  local human_notes
+  human_notes=$(read_human_notes)
+  if [ -n "$human_notes" ]; then
+    impl_prompt="$impl_prompt
+$human_notes"
+    log INFO "Notes humaines injectées dans le prompt."
+  fi
+
+  # Injecter le feedback humain de la feature précédente si présent
+  local prev_feedback="$PROJECT_DIR/logs/human-feedback-$((FEATURE_COUNT - 1)).md"
+  if [ -f "$prev_feedback" ]; then
+    impl_prompt="$impl_prompt
+
+FEEDBACK HUMAIN SUR LA FEATURE PRÉCÉDENTE (en tenir compte) :
+$(cat "$prev_feedback")"
+    log INFO "Feedback humain de la feature précédente injecté."
+  fi
+
   run_claude "$impl_prompt" "$MAX_TURNS_PER_INVOCATION" "$LOG_DIR/feature-$FEATURE_COUNT-impl.log" "implement" "$feature_name"
 
-  # --- Test & Fix Loop ---
+  # --- Test & Fix Loop (avec détection de boucle) ---
   attempt=0
   tests_passed=false
+  LAST_ERROR_HASH=""
+  local same_error_count=0
 
   while [ $attempt -lt $MAX_FIX_ATTEMPTS ]; do
     log INFO "Tests — tentative $((attempt + 1))/$MAX_FIX_ATTEMPTS"
@@ -681,18 +894,50 @@ EOF
 
     attempt=$((attempt + 1))
 
+    # Détection de boucle : même erreur que la tentative précédente ?
+    local current_error_hash
+    current_error_hash=$(error_hash "${BUILD_OUTPUT}${TEST_OUTPUT}")
+    if [ "$current_error_hash" = "$LAST_ERROR_HASH" ]; then
+      same_error_count=$((same_error_count + 1))
+    else
+      same_error_count=0
+    fi
+    LAST_ERROR_HASH="$current_error_hash"
+
     if [ $attempt -lt $MAX_FIX_ATTEMPTS ]; then
-      log WARN "Échec — correction en cours (tentative $attempt)..."
-      fix_prompt=$(write_fix_prompt "$attempt" "$MAX_FIX_ATTEMPTS" \
-        "$BUILD_EXIT" "${BUILD_OUTPUT: -3000}" \
-        "$TEST_EXIT" "${TEST_OUTPUT: -3000}")
-      run_claude "$fix_prompt" 30 "$LOG_DIR/feature-$FEATURE_COUNT-fix-$attempt.log" "fix" "$feature_name"
+      if [ "$same_error_count" -ge 2 ]; then
+        # Même erreur 3x de suite → abandon anticipé
+        log ERROR "Même erreur détectée 3 fois — boucle de fix, abandon de la feature."
+        notify "Feature '$feature_name' bloquée : même erreur en boucle (3x)"
+        break
+      elif [ "$same_error_count" -eq 1 ]; then
+        # Même erreur 2x → prompt d'approche différente
+        log WARN "Même erreur détectée 2 fois — changement d'approche..."
+        fix_prompt=$(write_fix_prompt "$attempt" "$MAX_FIX_ATTEMPTS" \
+          "$BUILD_EXIT" "${BUILD_OUTPUT: -3000}" \
+          "$TEST_EXIT" "${TEST_OUTPUT: -3000}")
+        fix_prompt="$fix_prompt
+
+ATTENTION : cette erreur est IDENTIQUE à la tentative précédente.
+Ton approche actuelle ne fonctionne pas. Tu DOIS :
+1. Repenser l'architecture de cette partie du code
+2. Essayer une approche radicalement différente
+3. Ne PAS réappliquer la même correction"
+        run_claude "$fix_prompt" 30 "$LOG_DIR/feature-$FEATURE_COUNT-fix-$attempt.log" "fix" "$feature_name"
+      else
+        log WARN "Échec — correction en cours (tentative $attempt)..."
+        fix_prompt=$(write_fix_prompt "$attempt" "$MAX_FIX_ATTEMPTS" \
+          "$BUILD_EXIT" "${BUILD_OUTPUT: -3000}" \
+          "$TEST_EXIT" "${TEST_OUTPUT: -3000}")
+        run_claude "$fix_prompt" 30 "$LOG_DIR/feature-$FEATURE_COUNT-fix-$attempt.log" "fix" "$feature_name"
+      fi
     fi
   done
 
   if [ "$tests_passed" = false ]; then
-    log ERROR "Feature '$feature_name' abandonnée après $MAX_FIX_ATTEMPTS tentatives."
+    log ERROR "Feature '$feature_name' abandonnée après $attempt tentatives."
     TOTAL_FAILURES=$((TOTAL_FAILURES + 1))
+    notify "Feature '$feature_name' abandonnée après $attempt tentatives de fix."
     # Retour sur main pour ne pas polluer la feature suivante
     run_in_project "git checkout main 2>/dev/null || true"
   fi
@@ -708,6 +953,40 @@ EOF
     log WARN "Rétrospective échouée — on continue."
   }
 
+  # --- Quality Gate (post-tests, pré-merge) ---
+  if [ "$tests_passed" = true ] && [ -n "${QUALITY_COMMAND:-}" ]; then
+    local quality_output quality_exit
+    log INFO "Quality gate en cours..."
+    quality_output=$(run_in_project "$QUALITY_COMMAND 2>&1") && quality_exit=0 || quality_exit=$?
+
+    if [ $quality_exit -ne 0 ]; then
+      log WARN "Quality gate échouée — tentative de correction..."
+      run_claude "La quality gate a échoué après les tests.
+
+COMMANDE : $QUALITY_COMMAND
+EXIT CODE : $quality_exit
+OUTPUT :
+${quality_output: -3000}
+
+Corrige le problème de qualité sans casser les tests existants.
+Exemples de problèmes : performance dégradée, bundle trop gros, couverture insuffisante, score lighthouse en baisse." \
+        20 "$LOG_DIR/feature-$FEATURE_COUNT-quality.log" "quality" "$feature_name" || {
+        log WARN "Correction quality gate échouée."
+      }
+
+      # Re-vérifier
+      quality_output=$(run_in_project "$QUALITY_COMMAND 2>&1") && quality_exit=0 || quality_exit=$?
+      if [ $quality_exit -ne 0 ]; then
+        log WARN "Quality gate toujours en échec — merge quand même (non-bloquant)."
+        notify "Quality gate échouée pour '$feature_name' — mergé quand même."
+      else
+        log INFO "Quality gate OK après correction."
+      fi
+    else
+      log INFO "Quality gate OK."
+    fi
+  fi
+
   # --- Merge si OK ---
   if [ "$tests_passed" = true ]; then
     if [ "$REQUIRE_HUMAN_APPROVAL" = true ]; then
@@ -722,6 +1001,7 @@ EOF
     fi
 
     log INFO "Feature '$feature_name' mergée."
+    notify "Feature #$FEATURE_COUNT '$feature_name' mergée (\$$TOTAL_COST_USD)"
   fi
 
   save_state
@@ -753,14 +1033,37 @@ done
 # ============================================================
 
 if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
-  log PHASE "PHASE FINALE — ÉVOLUTION"
-  evolve_prompt=$(render_phase "07-evolve.md")
-  run_claude "$evolve_prompt" 30 "$LOG_DIR/07-evolve.log" "evolve"
+  EVOLVE_CYCLES=$((EVOLVE_CYCLES + 1))
+  local max_evolve="${MAX_EVOLVE_CYCLES:-0}"
 
-  if [ ! -f "$PROJECT_DIR/DONE.md" ] && grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
-    log INFO "Nouvelles features ajoutées — relancement de la boucle."
-    save_state
-    exec "$0"
+  if [ "$max_evolve" -gt 0 ] && [ "$EVOLVE_CYCLES" -gt "$max_evolve" ]; then
+    log WARN "Limite de cycles evolve atteinte ($EVOLVE_CYCLES/$max_evolve) — arrêt."
+    notify "Limite de cycles evolve atteinte ($max_evolve). Projet terminé automatiquement."
+  else
+    log PHASE "PHASE FINALE — ÉVOLUTION (cycle $EVOLVE_CYCLES)"
+    evolve_prompt=$(render_phase "07-evolve.md")
+    run_claude "$evolve_prompt" 30 "$LOG_DIR/07-evolve.log" "evolve"
+
+    if [ ! -f "$PROJECT_DIR/DONE.md" ] && grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
+      # Compter les features ajoutées par l'IA
+      local new_features
+      new_features=$(grep -c '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null || echo "0")
+      AI_ROADMAP_ADDS=$((AI_ROADMAP_ADDS + new_features))
+      log INFO "Nouvelles features ajoutées par l'IA : $new_features (total IA: $AI_ROADMAP_ADDS)"
+
+      # Forcer une pause si trop de features ajoutées par l'IA
+      local max_ai_adds="${MAX_AI_ROADMAP_ADDS:-5}"
+      if [ "$max_ai_adds" -gt 0 ] && [ "$AI_ROADMAP_ADDS" -ge "$max_ai_adds" ]; then
+        log WARN "L'IA a ajouté $AI_ROADMAP_ADDS features à la roadmap — pause de validation requise."
+        notify "L'IA a ajouté $AI_ROADMAP_ADDS features à la roadmap. Validation humaine recommandée."
+        human_pause "L'IA a ajouté $AI_ROADMAP_ADDS features — valider la direction ?"
+        AI_ROADMAP_ADDS=0  # Reset après validation
+      fi
+
+      log INFO "Nouvelles features ajoutées — relancement de la boucle."
+      save_state
+      exec "$0"
+    fi
   fi
 fi
 
@@ -768,6 +1071,7 @@ fi
 # PHASE POST-PROJET — AUTO-AMÉLIORATION DE L'ORCHESTRATEUR
 # ============================================================
 
+notify "Projet terminé ! Features: $FEATURE_COUNT, Échecs: $TOTAL_FAILURES, Coût: \$$TOTAL_COST_USD"
 log PHASE "AUTO-AMÉLIORATION DE L'ORCHESTRATEUR"
 
 run_claude "$(cat <<'IMPROVE'
@@ -815,6 +1119,18 @@ IMPROVE
 )" 30 "$LOG_DIR/orchestrator-improvements.log" "self-improve"
 
 log INFO "Suggestions d'amélioration : project/orchestrator-improvements.md"
+
+# Extraire les learnings et les copier dans le template pour les futurs projets
+if [ -f "$PROJECT_DIR/orchestrator-improvements.md" ]; then
+  local learning_file="$SCRIPT_DIR/learnings/$(date +%Y-%m-%d)-${PROJECT_NAME:-project}.md"
+  {
+    echo "# Learnings — ${PROJECT_NAME:-project}"
+    echo "Date : $(date '+%Y-%m-%d')"
+    echo ""
+    cat "$PROJECT_DIR/orchestrator-improvements.md"
+  } > "$learning_file"
+  log INFO "Learnings sauvés dans le template : $learning_file"
+fi
 
 # ============================================================
 # BILAN FINAL

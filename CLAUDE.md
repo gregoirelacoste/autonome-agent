@@ -98,6 +98,20 @@ Substitue `{{VAR}}` dans les prompts. Attention : la substitution bash `${conten
 ### Reprise après crash
 Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `INDEX.md` existe ? → skip research. Features non-cochées dans ROADMAP ? → skip strategy. `state.json` → restaure les compteurs.
 
+### Contrôle humain mid-run
+- `.orc/human-notes.md` : lu et injecté dans le prompt avant chaque feature
+- `.orc/pause-requested` / `.orc/stop-after-feature` : signaux file-based pour le mode nohup
+- `logs/human-feedback-N.md` : feedback structuré, prioritaire sur les observations de l'IA
+
+### Détection de boucle fix
+`error_hash()` compare les erreurs entre tentatives. Même erreur 2x → prompt "change d'approche". 3x → abandon anticipé.
+
+### Quality gate
+`QUALITY_COMMAND` exécuté après tests, avant merge. Non-bloquant si échec après correction.
+
+### Mémoire inter-projets
+`learnings/` dans le template accumule les insights. Copiés dans le projet au bootstrap, lus par la phase 00.
+
 ## Roadmap
 
 Les items de roadmap sont des fichiers `.md` individuels dans `roadmap/`.
