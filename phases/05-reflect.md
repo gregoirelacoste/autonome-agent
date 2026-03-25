@@ -6,17 +6,24 @@ lis-le attentivement. Le feedback humain est PRIORITAIRE sur tes propres observa
 
 Analyse cette itération et améliore tes connaissances du projet :
 
-### 1. CODEBASE.md — Inventaire vivant (OBLIGATOIRE)
+### 1. codebase/ — Index & fichiers de détail (OBLIGATOIRE)
 
-Mets à jour CODEBASE.md avec ce que tu as créé/modifié :
-- **Modules & Exports** — nouvelles fonctions, classes, composants exportés
-- **Utilities & Helpers** — tout ce qui est réutilisable (ne pas dupliquer ensuite !)
-- **External Integrations** — nouvelles APIs/services intégrés
-- **Data Models** — nouveaux modèles, types, interfaces partagées
-- **Architecture Decisions** — si tu as fait un choix technique, note POURQUOI
+Mets à jour les fichiers de détail dans `codebase/` avec ce que tu as créé/modifié :
+- **codebase/modules.md** — nouvelles fonctions, classes, composants exportés
+- **codebase/utilities.md** — tout ce qui est réutilisable (ne pas dupliquer ensuite !)
+- **codebase/integrations.md** — nouvelles APIs/services intégrés
+- **codebase/data-models.md** — nouveaux modèles, types, interfaces partagées
+- **codebase/architecture.md** — si tu as fait un choix technique, note POURQUOI
+- **codebase/security.md** — patterns de sécurité appliqués, vérifications faites
 
-Format pour chaque entrée :
+Format pour chaque entrée dans les fichiers de détail :
 `- nom() dans chemin/fichier.ext — description courte de ce que ça fait`
+
+Puis mets à jour **codebase/INDEX.md** :
+- Ajoute/modifie le résumé d'une phrase par section impactée
+- L'index doit rester COMPACT (max 40 lignes)
+- L'index est une carte : il dit CE QUI EXISTE et OÙ TROUVER LE DÉTAIL
+- Ne mets PAS le détail dans l'index — seulement le nom + renvoi au fichier
 
 ### 2. stack-conventions.md — Conventions de stack
 
@@ -52,7 +59,7 @@ features nécessaires, bugs ou améliorations :
 
 ### 6. Architecture & Sécurité
 
-- Si tu as dû contourner l'architecture, note-le dans CODEBASE.md (section Architecture Decisions)
+- Si tu as dû contourner l'architecture, note-le dans codebase/architecture.md
 - Si ça s'accumule, ajoute une tâche de refactoring à la roadmap
 - Note les vérifications de sécurité effectuées (auth, validation, injection, secrets)
 
@@ -66,4 +73,4 @@ features nécessaires, bugs ou améliorations :
 - Temps estimé vs réel (nombre de turns)
 
 Ne modifie PAS le code applicatif dans cette phase.
-Uniquement CODEBASE.md, les skills, CLAUDE.md, la roadmap et les logs.
+Uniquement codebase/, les skills, CLAUDE.md, la roadmap et les logs.

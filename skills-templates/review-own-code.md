@@ -8,11 +8,11 @@ user_invocable: true
 
 Avant chaque commit, vérifier :
 
-### Anti-duplication (consulter CODEBASE.md)
-- [ ] Pas de nouvelle utility qui duplique une existante dans CODEBASE.md
-- [ ] Pas de nouveau composant qui duplique un existant
+### Anti-duplication (consulter codebase/INDEX.md)
+- [ ] Pas de nouvelle utility qui duplique une existante (vérifier codebase/utilities.md)
+- [ ] Pas de nouveau composant qui duplique un existant (vérifier codebase/modules.md)
 - [ ] Les patterns utilisés sont cohérents avec stack-conventions.md
-- [ ] Si une nouvelle utility réutilisable a été créée → la noter pour CODEBASE.md
+- [ ] Si une nouvelle utility réutilisable a été créée → la noter pour la phase reflect
 
 ### Correctness
 - [ ] La feature correspond aux critères d'acceptance de la ROADMAP

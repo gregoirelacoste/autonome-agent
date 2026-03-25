@@ -206,7 +206,7 @@ Si attempt == MAX_FIX:
 
 Après chaque feature, Claude enrichit sa connaissance du projet :
 
-1. **CODEBASE.md** — met à jour l'inventaire vivant : nouveaux modules, utilities, APIs, data models, décisions d'architecture. Consultable par les features suivantes pour éviter la duplication.
+1. **codebase/** — met à jour les fichiers de détail pertinents (modules.md, utilities.md, etc.) puis l'INDEX.md. L'index reste compact (max 40 lignes) — c'est la carte sémantique du projet consultée avant chaque feature.
 2. **stack-conventions.md** — enrichit les conventions spécifiques à la stack : nouveaux patterns, anti-patterns, optimisations, patterns de sécurité validés.
 3. **CLAUDE.md** — ajoute des règles si piège découvert, supprime les obsolètes
 4. **Skills** — crée un nouveau skill si pattern répété manuellement,
@@ -250,23 +250,24 @@ Claude analyse le projet terminé et :
 
 | Fichier | Rôle | Modifié quand |
 |---|---|---|
-| `CODEBASE.md` | Inventaire du projet | Après chaque feature (Reflect) |
+| `codebase/INDEX.md` | Carte sémantique du projet | Après chaque feature (Reflect) |
+| `codebase/*.md` | Détail par domaine | Après chaque feature (Reflect) |
 | `stack-conventions.md` | Conventions de stack | Après chaque feature (Reflect) |
 | `CLAUDE.md` | Ses instructions | Après chaque feature (Reflect) |
 | `.claude/skills/*.md` | Ses workflows | Quand un pattern se répète |
 | `ROADMAP.md` | Sa direction | Méta-rétros + veille |
 
-Le cycle vertueux (process + projet) :
+Le cycle vertueux (process + projet + économie de contexte) :
 ```
 Feature 1 : erreurs basiques → Reflect ajoute 3 règles au CLAUDE.md
-Feature 2 : crée formatDate() → Reflect l'ajoute à CODEBASE.md
+Feature 2 : crée formatDate() → Reflect l'ajoute à codebase/utilities.md + index
 Feature 3 : même type d'erreur E2E → crée un skill fix-e2e.md
-Feature 4 : besoin de formater une date → consulte CODEBASE.md → réutilise formatDate()
-Feature 5 : méta-rétro → CLAUDE.md nettoyé, stack-conventions.md enrichi
-Feature 8 : pattern répété → ajouté à stack-conventions.md → plus jamais oublié
+Feature 4 : besoin de formater une date → lit INDEX.md → lit utilities.md → réutilise !
+Feature 5 : méta-rétro → nettoyage index + stack-conventions enrichi
+Feature 8 : pattern sécurité répété → ajouté à codebase/security.md
 Feature 10 : dette technique détectée → refactoring ajouté à la roadmap
-Feature 15 : l'IA connaît chaque module, convention, utility → zéro duplication
-Feature 20 : expertise projet complète → implémentation rapide et cohérente
+Feature 15 : l'IA connaît chaque module via l'index → zéro duplication
+Feature 20 : index compact + détail à la demande → contexte minimal, expertise maximale
 ```
 
 ---
@@ -389,12 +390,26 @@ Le dossier `learnings/` dans le template accumule les apprentissages :
 
 ### Connaissance projet vivante (CODEBASE.md + stack-conventions.md)
 
-**CODEBASE.md** — inventaire vivant du projet, mis à jour après chaque feature :
-- Modules & Exports (fonctions, classes, composants avec chemin et description)
-- Utilities & Helpers (réutilisables — à consulter AVANT de créer du nouveau code)
-- External Integrations (APIs, services tiers, SDKs)
-- Data Models (schémas, types, interfaces)
-- Architecture Decisions (choix techniques avec justification)
+**codebase/ — index sémantique + fichiers de détail** (système DB-like)
+
+```
+codebase/
+├── INDEX.md          ← carte sémantique (max 40 lignes), lu TOUJOURS
+├── modules.md        ← fonctions, classes, composants par dossier
+├── utilities.md      ← helpers réutilisables avec signature et chemin
+├── integrations.md   ← APIs, services tiers, config, erreurs
+├── data-models.md    ← schémas DB, types TS, interfaces
+├── architecture.md   ← décisions prises, justification, alternatives rejetées
+└── security.md       ← patterns de sécurité validés, vérifications faites
+```
+
+**Principe** : l'INDEX.md est la seule entrée obligatoire. Il dit CE QUI EXISTE
+et OÙ TROUVER LE DÉTAIL. L'IA ne lit que les fichiers de détail pertinents pour
+la feature en cours → économie de contexte massive à mesure que le projet grossit.
+
+**Gain estimé** : à la feature 30, un CODEBASE.md monolithique ferait ~500 lignes
+(~2000 tokens chargés à chaque invocation). Avec l'index, l'IA charge ~40 lignes
+d'index + ~50 lignes du fichier de détail pertinent = ~360 tokens au lieu de ~2000.
 
 **stack-conventions.md** — skill auto-enrichie, spécifique à la stack du projet :
 - Conventions de code adoptées (nommage, structure, patterns)
@@ -403,9 +418,10 @@ Le dossier `learnings/` dans le template accumule les apprentissages :
 - Patterns de sécurité validés
 - Optimisations de performance appliquées
 
-Le cycle : implement consulte → reflect enrichit → implement suivant consulte → ...
-L'effet cumulatif fait que l'IA duplique de moins en moins et respecte de mieux
-en mieux les conventions au fil des features.
+Le cycle : implement consulte l'index → lit le détail pertinent → reflect enrichit
+le détail + met à jour l'index → implement suivant consulte l'index → ...
+L'effet cumulatif fait que l'IA duplique de moins en moins, respecte de mieux
+en mieux les conventions, et consomme moins de contexte au fil des features.
 
 ---
 
@@ -418,7 +434,14 @@ project/
 ├── ROADMAP.md                  # Backlog en epics (auto-évolutif)
 ├── DONE.md                     # Créé quand le projet est terminé
 │
-├── CODEBASE.md                  # Inventaire vivant (modules, utilities, APIs, decisions)
+├── codebase/                    # Mémoire structurée du projet (index sémantique)
+│   ├── INDEX.md                 # Carte sémantique (max 40 lignes, lu TOUJOURS)
+│   ├── modules.md               # Fonctions, classes, composants
+│   ├── utilities.md             # Helpers réutilisables
+│   ├── integrations.md          # APIs, services tiers
+│   ├── data-models.md           # Schémas, types, interfaces
+│   ├── architecture.md          # Décisions techniques + justification
+│   └── security.md              # Patterns de sécurité validés
 │
 ├── .claude/
 │   ├── skills/                 # Workflows auto-générés

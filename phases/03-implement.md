@@ -1,12 +1,17 @@
 FEATURE À IMPLÉMENTER : {{FEATURE_NAME}}
 
-### Avant de coder — inventaire obligatoire
+### Avant de coder — consultation de l'index (OBLIGATOIRE)
 
-Lis dans cet ordre :
-1. **CODEBASE.md** — l'inventaire du projet. Identifie :
-   - Les modules/utilities qui existent déjà et que tu peux réutiliser
-   - Les patterns architecturaux en place (les suivre, pas en inventer de nouveaux)
-   - Les APIs/services déjà intégrés (ne pas recréer un wrapper)
+1. **codebase/INDEX.md** — la carte sémantique du projet (TOUJOURS lire en premier).
+   Identifie les sections pertinentes pour cette feature, puis lis SEULEMENT
+   les fichiers de détail nécessaires :
+   - `codebase/modules.md` si tu as besoin de connaître les exports existants
+   - `codebase/utilities.md` si tu pourrais réutiliser un helper
+   - `codebase/integrations.md` si la feature touche une API/service
+   - `codebase/data-models.md` si tu manipules des données
+   - `codebase/architecture.md` si tu dois comprendre un choix technique
+   - `codebase/security.md` si la feature a un aspect sécurité
+   **NE LIS PAS tous les fichiers — uniquement ceux pertinents pour cette feature.**
 2. **.claude/skills/stack-conventions.md** — les conventions de la stack.
    Respecte-les. Si un anti-pattern est listé, ne le fais PAS.
 3. Le code existant lié à cette feature
@@ -17,11 +22,11 @@ Lis dans cet ordre :
 ### Anti-duplication — checklist AVANT de créer du code
 
 Avant de créer une nouvelle fonction, un nouveau composant ou un nouveau helper :
-- [ ] Vérifie dans CODEBASE.md qu'il n'existe pas déjà
+- [ ] Vérifie dans codebase/INDEX.md puis le fichier de détail qu'il n'existe pas déjà
 - [ ] Vérifie dans stack-conventions.md que le pattern est cohérent
 - [ ] Si une utility similaire existe → l'enrichir plutôt qu'en créer une nouvelle
 - [ ] Si un composant proche existe → le rendre paramétrique plutôt que dupliquer
-- [ ] Si tu crées quelque chose de nouveau et réutilisable → note-le pour CODEBASE.md
+- [ ] Si tu crées quelque chose de nouveau et réutilisable → note-le pour la phase reflect
 
 ### Workflow
 

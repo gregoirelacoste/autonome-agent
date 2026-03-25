@@ -23,27 +23,44 @@ Tu démarres un nouveau projet autonome.
      à la stack choisie (React, Astro, Java, etc.)
    - Section "## Anti-patterns" avec les erreurs classiques de cette stack
 
-4. Crée CODEBASE.md — l'inventaire vivant du projet :
-   ```markdown
-   # Codebase Inventory
-   > Ce fichier est mis à jour automatiquement après chaque feature.
-   > Consulte-le AVANT de coder pour éviter la duplication.
+4. Crée le dossier `codebase/` — la mémoire structurée du projet :
 
-   ## Modules & Exports
+   **INDEX.md** — la carte sémantique (TOUJOURS lu, max 40 lignes) :
+   ```markdown
+   # Codebase Index
+   > Carte sémantique du projet. Lu avant chaque feature.
+   > Pour le détail, consulte le fichier indiqué.
+
+   ## Modules (→ codebase/modules.md)
    (sera rempli au fil des features)
 
-   ## Utilities & Helpers
-   (fonctions réutilisables — NE PAS dupliquer, utiliser l'existant)
+   ## Utilities & Helpers (→ codebase/utilities.md)
+   (fonctions réutilisables — NE PAS dupliquer)
 
-   ## External Integrations
-   (APIs, services tiers, SDKs intégrés)
+   ## External Integrations (→ codebase/integrations.md)
+   (APIs, services tiers, SDKs)
 
-   ## Data Models
-   (schémas DB, types, interfaces partagées)
+   ## Data Models (→ codebase/data-models.md)
+   (schémas DB, types, interfaces)
 
-   ## Architecture Decisions
-   (choix techniques et leur justification)
+   ## Architecture Decisions (→ codebase/architecture.md)
+   (choix techniques et justification)
+
+   ## Security Patterns (→ codebase/security.md)
+   (patterns de sécurité validés pour ce projet)
    ```
+
+   **Fichiers de détail** (créés vides, remplis au fil des features) :
+   - `codebase/modules.md` — fonctions, classes, composants par dossier
+   - `codebase/utilities.md` — helpers réutilisables avec signature et chemin
+   - `codebase/integrations.md` — APIs/services intégrés, config, erreurs
+   - `codebase/data-models.md` — schémas DB, types TS, interfaces
+   - `codebase/architecture.md` — décisions prises, justification, alternatives rejetées
+   - `codebase/security.md` — patterns de sécurité adoptés, vérifications faites
+
+   **Règle clé** : l'INDEX.md reste COMPACT (max 40 lignes).
+   Chaque section indique le fichier de détail + un résumé d'une phrase.
+   L'IA lit l'index, puis pioche SEULEMENT le fichier de détail utile.
 
 5. Crée les skills de base dans .claude/skills/ :
    - implement-feature.md (workflow d'implémentation)
@@ -52,17 +69,17 @@ Tu démarres un nouveau projet autonome.
    - review-own-code.md (auto-review avant commit)
    - stack-conventions.md (rempli avec les conventions de la stack choisie)
 
-5. Crée un ROADMAP.md initial vide (sera rempli après la recherche) :
+6. Crée un ROADMAP.md initial vide (sera rempli après la recherche) :
    ```
    # Roadmap
    > Sera structurée après la phase de recherche initiale.
    ```
 
-6. Initialise stack-conventions.md avec les patterns de la stack :
+7. Initialise stack-conventions.md avec les patterns de la stack :
    - Si React/Next.js : hooks patterns, server/client components, state management
    - Si Astro : islands architecture, content collections, SSG vs SSR
    - Si Java/Spring : dependency injection, repository pattern, DTOs
    - Si Python/Django : models, views, serializers, middleware
    - Adapte au contexte du BRIEF, pas de conventions génériques inutiles
 
-7. Commite : "chore: bootstrap project structure"
+8. Commite : "chore: bootstrap project structure"
