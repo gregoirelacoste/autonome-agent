@@ -48,6 +48,7 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 │   ├── tokens.json          ← Coûts (ignoré)
 │   ├── .lock                ← Lockfile (ignoré)
 │   ├── .pid                 ← PID du process (ignoré)
+│   ├── tracking-issue       ← Numéro issue GitHub de tracking (ignoré)
 │   └── logs/                ← Logs orchestrateur (ignoré)
 └── project/                 ← Code produit (son propre git)
 ```
@@ -102,6 +103,23 @@ Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `INDEX.md` existe
 - `.orc/human-notes.md` : lu et injecté dans le prompt avant chaque feature
 - `.orc/pause-requested` / `.orc/stop-after-feature` : signaux file-based pour le mode nohup
 - `logs/human-feedback-N.md` : feedback structuré, prioritaire sur les observations de l'IA
+
+### GitHub Integration (local-first, GitHub-augmented)
+**Principe** : local = source de vérité, GitHub = miroir de visibilité. Tout fonctionne sans GitHub. Chaque option est indépendante et off par défaut.
+- **`GIT_STRATEGY`** : `local` (défaut, merge direct) | `pr` (GitHub PRs). Fallback local si PR échoue.
+- **Tracking issue** : `GITHUB_TRACKING_ISSUE=true` crée une issue "ORC Run", commentée à chaque feature. Fonctionne en mode `local` et `pr`.
+- **Signaux GitHub** : `GITHUB_SIGNALS=true` lit les labels `orc:pause`, `orc:stop`, `orc:continue`. Les signaux locaux (`.orc/`) fonctionnent toujours, GitHub est un canal additionnel.
+- **Approbation multi-source** : terminal (`c`), fichier local (`touch .orc/approve`), ou PR review GitHub. Premier arrivé gagne.
+- **Features abandonnées** : auto-création d'une issue "bug" avec les fix-reflections (si `gh` disponible).
+- **Roadmap sync** : `GITHUB_SYNC_ROADMAP=true` miroir push-only de ROADMAP.md → GitHub Issues. Crée/ferme les issues. L'orchestrateur ne lit jamais les issues comme source de features. Mapping dans `.orc/roadmap-issues.map`.
+- **Milestones** : `gh_sync_milestone()` crée un milestone par epic. Appelé au reset du compteur epic.
+- **Feedback GitHub** : `GITHUB_FEEDBACK=true` lit les commentaires humains sur la tracking issue et les injecte dans le prompt (en plus des notes locales).
+- **CI distant** : `GITHUB_CI=true` attend les checks GitHub Actions après la quality gate. Non-bloquant — les tests locaux font toujours foi. Poste aussi la quality gate comme commit status.
+- **Releases** : `GITHUB_RELEASES=true` crée une release après chaque meta-rétro (`v0.N.0`) et en fin de projet (`v1.0.0`). Changelog auto-généré.
+- **Dégradation gracieuse** : `gh` absent → tout fonctionne en local sans erreur.
+- Fonctions Phase 1 : `gh_available()`, `gh_pr_mode()`, `gh_create_tracking_issue()`, `gh_create_pr()`, `gh_merge_pr()`, `gh_comment()`, `gh_check_signals()`, `gh_create_abandoned_issue()`, `gh_close_tracking_issue()`.
+- Fonctions Phase 2 : `gh_sync_roadmap()`, `gh_sync_milestone()`, `gh_read_feedback()`.
+- Fonctions Phase 3 : `gh_wait_ci()`, `gh_post_quality_status()`, `gh_create_release()`.
 
 ### Détection de boucle fix
 `error_hash()` compare les erreurs entre tentatives. Même erreur 2x → prompt "change d'approche". 3x → abandon anticipé.
