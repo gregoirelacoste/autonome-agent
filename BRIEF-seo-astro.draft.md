@@ -32,14 +32,23 @@ Plateforme de contenu SEO/GEO optimisée, construite avec Astro (SSG), qui gén�
 - Inter-linking automatique entre articles du même cluster thématique
 
 ### Epic 3 — Intégration SE Ranking API
-- Connexion à l'API SE Ranking (authentification API key)
-- Script/CLI pour récupérer les keyword suggestions par niche/seed keyword
-  - Volume de recherche, difficulté, CPC, tendance
-  - SERP features (featured snippet, PAA, local pack)
-  - Keywords des concurrents
-- Stockage local des données SE Ranking (JSON/SQLite) pour éviter les appels API inutiles
-- Dashboard ou page admin listant les opportunités de mots-clés
-- Priorisation automatique des keywords : volume × (1 - difficulté) = score d'opportunité
+- Connexion à l'API SE Ranking :
+  - **Data API** (`https://api.seranking.com/v1/`) — données SEO brutes
+  - **Project API** (`https://api4.seranking.com/`) — gestion de projet (optionnel V2)
+  - Auth : header `Authorization: Token <API_KEY>` (les deux APIs ont des clés séparées)
+  - Rate limit : 10 req/sec par défaut
+- Endpoints clés à utiliser :
+  - `POST /v1/keywords/export` — données bulk (volume, CPC, difficulté, intent, SERP features) — jusqu'à 5000 keywords — ~10 crédits/keyword
+  - `GET /v1/keywords/similar` — keywords similaires avec filtrage par volume, difficulté, intent, SERP features
+  - `GET /v1/keywords/related` — keywords associés avec score de pertinence
+  - `GET /v1/domain/keywords` — keywords d'un concurrent (avec filtrage par SERP features, intents, trafic)
+  - `GET /v1/domain/keywords/comparison` — keyword gap entre deux domaines
+  - `GET /v1/ai-search/prompts-by-target` — prompts IA où le domaine apparaît (ChatGPT, Perplexity, Gemini, AI Overviews)
+- **Note importante** : le Content Editor / Content Idea Finder de SE Ranking est UI-only, pas d'API. La logique de suggestion d'articles est à construire nous-mêmes à partir des données keywords.
+- Stockage local des résultats API dans `data/seranking/` (fichiers JSON). Cache pour éviter les appels redondants. Mode offline si le cache existe.
+- Script CLI : `pnpm run seo:keywords -- --seed "mot clé" --lang fr --db france`
+- Priorisation automatique : score d'opportunité = `volume × (1 - difficulty/100)`, filtré par intent (informational prioritaire)
+- Budget crédits : ~10 crédits/keyword. Prévoir 10 000 crédits pour une exploration initiale de 1000 keywords.
 
 ### Epic 4 — Génération automatique d'articles
 - Pipeline de génération d'articles basé sur les keywords prioritaires
@@ -74,6 +83,10 @@ Plateforme de contenu SEO/GEO optimisée, construite avec Astro (SSG), qui gén�
   - Score de citabilité (présence de stats, de définitions claires, de sources)
   - Vérification des AI crawler permissions dans robots.txt
 - Rapport GEO global du site (score moyen, articles à optimiser)
+- **Monitoring AI Search** via SE Ranking API (`/v1/ai-search/prompts-by-target`) :
+  - Tracker les prompts IA où le site apparaît (Google AI Overviews, ChatGPT, Perplexity, Gemini)
+  - Identifier les articles cités et ceux qui ne le sont pas
+  - Ajuster la stratégie de contenu en fonction de la visibilité IA
 - Content clusters : regroupement thématique des articles, avec page pilier par cluster
 - Maillage interne automatique entre articles du même cluster
 
@@ -84,9 +97,10 @@ Plateforme de contenu SEO/GEO optimisée, construite avec Astro (SSG), qui gén�
 - **Styling** : Tailwind CSS (utility-first, tree-shaken)
 - **SEO** : `astro-seo` + `@astrojs/sitemap` + `schema-dts` pour les types JSON-LD
 - **Markdown** : `rehype-slug`, `rehype-autolink-headings`, `rehype-external-links`, `remark-toc`, `remark-reading-time`
-- **Données SEO** : SE Ranking API (REST, API key auth)
-- **Stockage données** : fichiers JSON locaux (pas de BDD — le site est statique)
+- **Données SEO** : SE Ranking Data API (`api.seranking.com/v1/`, token auth, 10 req/sec)
+- **Stockage données** : fichiers JSON dans `data/seranking/` (cache local, mode offline)
 - **Génération articles** : Claude API (ou Claude CLI) appelé par des scripts Node.js
+- **MCP** : SE Ranking MCP Server disponible (optionnel, pour interaction Claude directe)
 - **Hébergement** : Cloudflare Pages (CDN global, gratuit, TTFB rapide)
 - **CI/CD** : GitHub Actions → build Astro → deploy Cloudflare Pages
 - **Package manager** : pnpm
@@ -138,7 +152,8 @@ PAUSE_EVERY_N_FEATURES=5
 ```
 
 ### Clés API nécessaires (variables d'env)
-- `SE_RANKING_API_KEY` — clé API SE Ranking
+- `SE_RANKING_DATA_API_KEY` — clé Data API SE Ranking (UUID format, pour `api.seranking.com/v1/`)
+- `SE_RANKING_PROJECT_API_KEY` — clé Project API SE Ranking (optionnel V2, pour `api4.seranking.com`)
 - `ANTHROPIC_API_KEY` — pour la génération d'articles (si scripts de génération utilisent l'API Claude directement)
 
 ### Priorités
