@@ -48,6 +48,7 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 │   ├── tokens.json          ← Coûts (ignoré)
 │   ├── .lock                ← Lockfile (ignoré)
 │   ├── .pid                 ← PID du process (ignoré)
+│   ├── tracking-issue       ← Numéro issue GitHub de tracking (ignoré)
 │   └── logs/                ← Logs orchestrateur (ignoré)
 └── project/                 ← Code produit (son propre git)
 ```
@@ -102,6 +103,15 @@ Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `INDEX.md` existe
 - `.orc/human-notes.md` : lu et injecté dans le prompt avant chaque feature
 - `.orc/pause-requested` / `.orc/stop-after-feature` : signaux file-based pour le mode nohup
 - `logs/human-feedback-N.md` : feedback structuré, prioritaire sur les observations de l'IA
+
+### GitHub Integration (`GIT_STRATEGY`)
+Deux modes : `local` (défaut, merge direct) et `pr` (GitHub Pull Requests).
+- **Mode `pr`** : chaque feature crée une PR via `gh`, attend review si `REQUIRE_HUMAN_APPROVAL=true`, merge via GitHub, fallback local si échec.
+- **Tracking issue** : `GITHUB_TRACKING_ISSUE=true` crée une issue "ORC Run" au bootstrap, commentée à chaque feature (début/fin/abandon), fermée en fin de run.
+- **Signaux GitHub** : `GITHUB_SIGNALS=true` lit les labels `orc:pause`, `orc:stop`, `orc:continue` sur la tracking issue dans `check_signals()`.
+- **Features abandonnées** : auto-création d'une issue "bug" avec les fix-reflections quand une feature est abandonnée.
+- **Dégradation gracieuse** : si `gh` absent ou non authentifié, tout fonctionne en mode local.
+- Fonctions : `gh_available()`, `gh_pr_mode()`, `gh_create_tracking_issue()`, `gh_create_pr()`, `gh_merge_pr()`, `gh_comment()`, `gh_check_signals()`, `gh_create_abandoned_issue()`, `gh_close_tracking_issue()`.
 
 ### Détection de boucle fix
 `error_hash()` compare les erreurs entre tentatives. Même erreur 2x → prompt "change d'approche". 3x → abandon anticipé.

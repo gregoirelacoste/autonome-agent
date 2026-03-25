@@ -518,6 +518,9 @@ notify() {
 check_signals() {
   local signal_dir="$SCRIPT_DIR/.orc"
 
+  # Vérifier les signaux GitHub (labels sur la tracking issue)
+  gh_check_signals
+
   # Signal : pause demandée
   if [ -f "$signal_dir/pause-requested" ]; then
     rm -f "$signal_dir/pause-requested"
@@ -545,6 +548,321 @@ check_signals() {
     print_cost_summary
     exit 0
   fi
+}
+
+# === GITHUB INTEGRATION ===
+
+# Détecte si GitHub est disponible et configuré
+HAS_GH=false
+TRACKING_ISSUE_NUMBER=""
+
+gh_available() {
+  if [ "$HAS_GH" = true ]; then return 0; fi
+  if command -v gh &> /dev/null && gh auth status &> /dev/null; then
+    HAS_GH=true
+    return 0
+  fi
+  return 1
+}
+
+# Vérifie si on utilise le mode PR
+gh_pr_mode() {
+  [ "${GIT_STRATEGY:-local}" = "pr" ] && gh_available
+}
+
+# Récupère le owner/repo depuis le remote git
+gh_repo_slug() {
+  local remote="${GITHUB_REMOTE:-origin}"
+  run_in_project "git remote get-url '$remote' 2>/dev/null" \
+    | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##'
+}
+
+# Crée l'issue de tracking pour un run orchestrateur
+gh_create_tracking_issue() {
+  if ! gh_available || [ "${GITHUB_TRACKING_ISSUE:-false}" != "true" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+  if [ -z "$repo_slug" ]; then
+    log WARN "GitHub: impossible de déterminer le repo — tracking issue non créée."
+    return 1
+  fi
+
+  local body
+  body="## 🔄 ORC Orchestrator Run
+
+**Projet** : ${PROJECT_NAME:-$(basename "$PROJECT_DIR")}
+**Démarré** : $(date '+%Y-%m-%d %H:%M:%S')
+**Config** : MAX_FEATURES=$MAX_FEATURES | EPIC_SIZE=$EPIC_SIZE | MAX_FIX=$MAX_FIX_ATTEMPTS
+
+---
+_Cet issue est mis à jour automatiquement par l'orchestrateur ORC._
+_Labels \`orc:pause\`, \`orc:stop\`, \`orc:continue\` peuvent être utilisés comme signaux._"
+
+  local issue_url
+  issue_url=$(gh issue create \
+    --repo "$repo_slug" \
+    --title "🔄 ORC Run: ${PROJECT_NAME:-$(basename "$PROJECT_DIR")} — $(date '+%Y-%m-%d')" \
+    --body "$body" \
+    --label "orc-run" 2>/dev/null) || {
+    # Le label n'existe peut-être pas — retry sans label
+    issue_url=$(gh issue create \
+      --repo "$repo_slug" \
+      --title "🔄 ORC Run: ${PROJECT_NAME:-$(basename "$PROJECT_DIR")} — $(date '+%Y-%m-%d')" \
+      --body "$body" 2>/dev/null) || {
+      log WARN "GitHub: impossible de créer la tracking issue."
+      return 1
+    }
+  }
+
+  TRACKING_ISSUE_NUMBER=$(echo "$issue_url" | grep -oE '[0-9]+$')
+  log INFO "GitHub: tracking issue créée → $issue_url"
+
+  # Persister le numéro de l'issue dans .orc/
+  echo "$TRACKING_ISSUE_NUMBER" > "$SCRIPT_DIR/.orc/tracking-issue"
+}
+
+# Restaure le numéro de la tracking issue (pour reprise)
+gh_restore_tracking_issue() {
+  local issue_file="$SCRIPT_DIR/.orc/tracking-issue"
+  if [ -f "$issue_file" ]; then
+    TRACKING_ISSUE_NUMBER=$(cat "$issue_file" 2>/dev/null || echo "")
+  fi
+}
+
+# Poste un commentaire sur la tracking issue
+gh_comment() {
+  if ! gh_available || [ -z "$TRACKING_ISSUE_NUMBER" ]; then
+    return 0
+  fi
+
+  local message="$1"
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+
+  gh issue comment "$TRACKING_ISSUE_NUMBER" \
+    --repo "$repo_slug" \
+    --body "$message" &>/dev/null || {
+    log WARN "GitHub: échec commentaire sur issue #$TRACKING_ISSUE_NUMBER"
+  }
+}
+
+# Crée une PR pour une feature branch
+gh_create_pr() {
+  local branch="$1" feature_name="$2" fix_attempts="${3:-0}"
+
+  if ! gh_pr_mode; then return 1; fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+  local remote="${GITHUB_REMOTE:-origin}"
+
+  # Push la branche
+  run_in_project "git push -u '$remote' '$branch' 2>&1" || {
+    log WARN "GitHub: push de la branche '$branch' échoué."
+    return 1
+  }
+
+  local body
+  body="## Feature: $feature_name
+
+**Orchestrated by ORC** — Feature #$FEATURE_COUNT
+- Fix attempts: $fix_attempts
+- Cost so far: \$${TOTAL_COST_USD} USD"
+
+  if [ -n "$TRACKING_ISSUE_NUMBER" ]; then
+    body="$body
+- Tracking: #$TRACKING_ISSUE_NUMBER"
+  fi
+
+  local pr_url
+  pr_url=$(gh pr create \
+    --repo "$repo_slug" \
+    --base main \
+    --head "$branch" \
+    --title "feat: $feature_name" \
+    --body "$body" 2>/dev/null) || {
+    log WARN "GitHub: impossible de créer la PR pour '$feature_name'."
+    return 1
+  }
+
+  log INFO "GitHub: PR créée → $pr_url"
+  echo "$pr_url"
+}
+
+# Merge une PR (auto ou après review)
+gh_merge_pr() {
+  local pr_url="$1"
+
+  if ! gh_pr_mode; then return 1; fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+
+  # Extraire le numéro de PR
+  local pr_number
+  pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$')
+
+  if [ "$REQUIRE_HUMAN_APPROVAL" = true ]; then
+    # Attendre la review (poll toutes les 30s, timeout 24h)
+    log INFO "GitHub: en attente de review pour PR #$pr_number..."
+    notify "PR #$pr_number en attente de review : $pr_url"
+    gh_comment "⏳ Feature #$FEATURE_COUNT en attente de review humaine → $pr_url"
+
+    local wait_count=0
+    local max_wait=2880  # 24h à 30s d'intervalle
+    while [ $wait_count -lt $max_wait ]; do
+      local review_state
+      review_state=$(gh pr view "$pr_number" \
+        --repo "$repo_slug" \
+        --json reviewDecision \
+        --jq '.reviewDecision' 2>/dev/null || echo "")
+
+      if [ "$review_state" = "APPROVED" ]; then
+        log INFO "GitHub: PR #$pr_number approuvée !"
+        break
+      fi
+
+      # Vérifier aussi les signaux locaux pour pouvoir quitter
+      if [ -f "$SCRIPT_DIR/.orc/stop-after-feature" ]; then
+        log WARN "Signal stop détecté pendant l'attente de review."
+        return 1
+      fi
+
+      sleep 30
+      wait_count=$((wait_count + 1))
+    done
+
+    if [ $wait_count -ge $max_wait ]; then
+      log ERROR "GitHub: timeout (24h) en attente de review pour PR #$pr_number."
+      return 1
+    fi
+  fi
+
+  # Merge
+  gh pr merge "$pr_number" \
+    --repo "$repo_slug" \
+    --merge \
+    --delete-branch 2>/dev/null || {
+    log WARN "GitHub: merge de PR #$pr_number échoué — fallback merge local."
+    return 1
+  }
+
+  # Synchroniser le main local
+  run_in_project "git checkout main 2>/dev/null && git pull '$GITHUB_REMOTE' main 2>/dev/null || true"
+
+  log INFO "GitHub: PR #$pr_number mergée et branche supprimée."
+  return 0
+}
+
+# Vérifie les signaux GitHub (labels sur la tracking issue)
+gh_check_signals() {
+  if ! gh_available || [ "${GITHUB_SIGNALS:-false}" != "true" ] || [ -z "$TRACKING_ISSUE_NUMBER" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+
+  local labels
+  labels=$(gh issue view "$TRACKING_ISSUE_NUMBER" \
+    --repo "$repo_slug" \
+    --json labels \
+    --jq '.labels[].name' 2>/dev/null || echo "")
+
+  # Signal pause
+  if echo "$labels" | grep -q "orc:pause"; then
+    log INFO "GitHub: signal orc:pause détecté sur issue #$TRACKING_ISSUE_NUMBER"
+    # Retirer le label
+    gh issue edit "$TRACKING_ISSUE_NUMBER" \
+      --repo "$repo_slug" \
+      --remove-label "orc:pause" &>/dev/null || true
+    # Créer le fichier de signal local
+    touch "$SCRIPT_DIR/.orc/pause-requested"
+  fi
+
+  # Signal stop
+  if echo "$labels" | grep -q "orc:stop"; then
+    log INFO "GitHub: signal orc:stop détecté sur issue #$TRACKING_ISSUE_NUMBER"
+    gh issue edit "$TRACKING_ISSUE_NUMBER" \
+      --repo "$repo_slug" \
+      --remove-label "orc:stop" &>/dev/null || true
+    touch "$SCRIPT_DIR/.orc/stop-after-feature"
+  fi
+
+  # Signal continue (pour débloquer un nohup en attente)
+  if echo "$labels" | grep -q "orc:continue"; then
+    log INFO "GitHub: signal orc:continue détecté sur issue #$TRACKING_ISSUE_NUMBER"
+    gh issue edit "$TRACKING_ISSUE_NUMBER" \
+      --repo "$repo_slug" \
+      --remove-label "orc:continue" &>/dev/null || true
+    touch "$SCRIPT_DIR/.orc/continue"
+  fi
+}
+
+# Crée une issue pour une feature abandonnée
+gh_create_abandoned_issue() {
+  local feature_name="$1" attempts="$2"
+
+  if ! gh_available || [ "${GITHUB_TRACKING_ISSUE:-false}" != "true" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+
+  local body="## Feature abandonnée : $feature_name
+
+**Tentatives** : $attempts / $MAX_FIX_ATTEMPTS
+**Feature #** : $FEATURE_COUNT"
+
+  # Ajouter les réflexions si disponibles
+  local reflections="$PROJECT_DIR/logs/fix-reflections-$FEATURE_COUNT.md"
+  if [ -f "$reflections" ]; then
+    body="$body
+
+### Réflexions de debug
+\`\`\`
+$(tail -50 "$reflections")
+\`\`\`"
+  fi
+
+  gh issue create \
+    --repo "$repo_slug" \
+    --title "🐛 Abandoned: $feature_name" \
+    --body "$body" \
+    --label "bug,orc-abandoned" 2>/dev/null || {
+    # Retry sans labels
+    gh issue create \
+      --repo "$repo_slug" \
+      --title "🐛 Abandoned: $feature_name" \
+      --body "$body" 2>/dev/null || true
+  }
+}
+
+# Ferme la tracking issue à la fin du run
+gh_close_tracking_issue() {
+  if ! gh_available || [ -z "$TRACKING_ISSUE_NUMBER" ]; then
+    return 0
+  fi
+
+  local repo_slug
+  repo_slug=$(gh_repo_slug)
+
+  gh_comment "## 🏁 Run terminé
+
+- **Features** : $FEATURE_COUNT
+- **Échecs** : $TOTAL_FAILURES
+- **Coût total** : \$${TOTAL_COST_USD} USD
+- **Durée** : $(date '+%Y-%m-%d %H:%M:%S')"
+
+  gh issue close "$TRACKING_ISSUE_NUMBER" \
+    --repo "$repo_slug" &>/dev/null || true
+
+  log INFO "GitHub: tracking issue #$TRACKING_ISSUE_NUMBER fermée."
+  rm -f "$SCRIPT_DIR/.orc/tracking-issue"
 }
 
 # === HUMAN NOTES (instructions mid-run asynchrones) ===
@@ -896,10 +1214,12 @@ echo $$ > "$LOCKFILE"
 mkdir -p "$LOG_DIR"
 init_tokens
 restore_state
+gh_restore_tracking_issue
 
 log PHASE "DÉMARRAGE DE L'AGENT AUTONOME"
 log INFO "Config : MAX_FEATURES=$MAX_FEATURES | MAX_FIX=$MAX_FIX_ATTEMPTS | EPIC_SIZE=$EPIC_SIZE"
 log INFO "Recherche : $ENABLE_RESEARCH | Approbation humaine : $REQUIRE_HUMAN_APPROVAL"
+log INFO "Git strategy : ${GIT_STRATEGY:-local} | GitHub tracking : ${GITHUB_TRACKING_ISSUE:-false} | GitHub signals : ${GITHUB_SIGNALS:-false}"
 if [ -n "${MAX_BUDGET_USD:-}" ]; then
   log INFO "Budget max : \$${MAX_BUDGET_USD} USD"
 fi
@@ -949,6 +1269,11 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
 
   local_prompt=$(render_phase "00-bootstrap.md")
   run_claude "$local_prompt" 60 "$LOG_DIR/00-bootstrap.log" "bootstrap"
+
+  # Créer la tracking issue GitHub si configuré
+  if [ -z "$TRACKING_ISSUE_NUMBER" ]; then
+    gh_create_tracking_issue
+  fi
 
   log INFO "Bootstrap terminé."
 else
@@ -1004,6 +1329,7 @@ while [ $FEATURE_COUNT -lt $MAX_FEATURES ]; do
   save_state
 
   log PHASE "FEATURE #$FEATURE_COUNT : $feature_name"
+  gh_comment "🚀 **Feature #$FEATURE_COUNT** : $feature_name — démarrage"
 
   # --- Vérifier les signaux humains ---
   check_signals
@@ -1149,6 +1475,8 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
     log ERROR "Feature '$feature_name' abandonnée après $attempt tentatives."
     TOTAL_FAILURES=$((TOTAL_FAILURES + 1))
     notify "Feature '$feature_name' abandonnée après $attempt tentatives de fix."
+    gh_comment "❌ **Feature #$FEATURE_COUNT** : $feature_name — abandonnée après $attempt tentatives"
+    gh_create_abandoned_issue "$feature_name" "$attempt"
     # Retour sur main pour ne pas polluer la feature suivante
     run_in_project "git checkout main 2>/dev/null || true"
   fi
@@ -1200,19 +1528,43 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
 
   # --- Merge si OK ---
   if [ "$tests_passed" = true ]; then
-    if [ "$REQUIRE_HUMAN_APPROVAL" = true ]; then
-      human_pause "Approuver le merge de : $feature_name"
-    fi
-
     current_branch=$(run_in_project "git branch --show-current 2>/dev/null || echo ''")
     if [ -n "$current_branch" ] && [ "$current_branch" != "main" ]; then
-      # Sanitize feature name : supprimer les apostrophes qui cassent eval
       local safe_feature_name="${feature_name//\'/}"
-      run_in_project "git checkout main 2>/dev/null && git merge --no-ff '$current_branch' -m \"feat: $safe_feature_name\" 2>/dev/null || true"
+
+      if gh_pr_mode; then
+        # === MODE PR : créer une PR, merger via GitHub ===
+        local pr_url
+        pr_url=$(gh_create_pr "$current_branch" "$safe_feature_name" "$attempt") || pr_url=""
+
+        if [ -n "$pr_url" ]; then
+          gh_merge_pr "$pr_url" || {
+            # Fallback : merge local si PR échoue
+            log WARN "Fallback → merge local."
+            if [ "$REQUIRE_HUMAN_APPROVAL" = true ] && [ -t 0 ]; then
+              human_pause "Approuver le merge de : $feature_name"
+            fi
+            run_in_project "git checkout main 2>/dev/null && git merge --no-ff '$current_branch' -m \"feat: $safe_feature_name\" 2>/dev/null || true"
+          }
+        else
+          # Pas de PR → merge local
+          if [ "$REQUIRE_HUMAN_APPROVAL" = true ] && [ -t 0 ]; then
+            human_pause "Approuver le merge de : $feature_name"
+          fi
+          run_in_project "git checkout main 2>/dev/null && git merge --no-ff '$current_branch' -m \"feat: $safe_feature_name\" 2>/dev/null || true"
+        fi
+      else
+        # === MODE LOCAL : merge direct (comportement original) ===
+        if [ "$REQUIRE_HUMAN_APPROVAL" = true ]; then
+          human_pause "Approuver le merge de : $feature_name"
+        fi
+        run_in_project "git checkout main 2>/dev/null && git merge --no-ff '$current_branch' -m \"feat: $safe_feature_name\" 2>/dev/null || true"
+      fi
     fi
 
     log INFO "Feature '$feature_name' mergée."
     notify "Feature #$FEATURE_COUNT '$feature_name' mergée (\$$TOTAL_COST_USD)"
+    gh_comment "✅ **Feature #$FEATURE_COUNT** : $feature_name — mergée (fix: $attempt, coût: \$${TOTAL_COST_USD})"
   fi
 
   save_state
@@ -1397,6 +1749,8 @@ fi
 # ============================================================
 # BILAN FINAL
 # ============================================================
+
+gh_close_tracking_issue
 
 log PHASE "TERMINÉ"
 log INFO "Features complétées : $FEATURE_COUNT"
