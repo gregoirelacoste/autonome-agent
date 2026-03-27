@@ -280,6 +280,16 @@ cmd_restart() {
 # UTILITAIRES AFFICHAGE
 # ============================================================
 
+# Longueur visible d'une string (sans ANSI escape codes, ajuste pour emojis 2-wide)
+visible_len() {
+  local stripped
+  stripped=$(printf '%s' "$1" | sed 's/\x1b\[[0-9;]*m//g')
+  # Compter les caractères multi-width courants (emojis) — approximation simple
+  local emoji_count
+  emoji_count=$(printf '%s' "$stripped" | grep -oP '[\x{1F300}-\x{1F9FF}]|✅|🔄|✓|✗' 2>/dev/null | wc -l || echo "0")
+  echo $(( ${#stripped} + emoji_count ))
+}
+
 # Dessine une barre de progression : progress_bar <current> <total> <width>
 progress_bar() {
   local current="${1:-0}" total="${2:-1}" width="${3:-30}"
@@ -344,6 +354,7 @@ estimate_remaining() {
   [ -f "$roadmap" ] || return
   local remaining
   remaining=$(grep -c '^\- \[ \]' "$roadmap" 2>/dev/null || echo "0")
+  [ "$remaining" -eq 0 ] && return
 
   local eta_s=$((avg_per_feature * remaining))
   local eta_h=$((eta_s / 3600))

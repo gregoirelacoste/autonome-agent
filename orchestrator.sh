@@ -49,6 +49,7 @@ CURRENT_PHASE=""
 PHASE_STARTED_AT=""
 RUN_STARTED_AT=$(date -Iseconds)
 FEATURES_TIMELINE="[]"
+LAST_FUNCTIONAL_CHECK="null"
 
 # === TRACKING TOKENS ===
 TOKENS_FILE="$SCRIPT_DIR/.orc/tokens.json"
@@ -137,7 +138,7 @@ save_state() {
         run_started_at: $run_started_at,
         features_timeline: $features_timeline,
         functional_check_passed: $functional_check_passed
-      }' > "$STATE_FILE"
+      }' > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
   else
     # Fallback sans jq — format simple
     cat > "$STATE_FILE" << STATEEOF
@@ -242,7 +243,7 @@ ${func_output: -3000}
 RÈGLE ABSOLUE : l'application DOIT être fonctionnelle après chaque feature.
 Corrige le problème pour que l'app démarre/fonctionne correctement.
 Ne casse PAS les tests existants." \
-    20 "$LOG_DIR/feature-functional-check.log" "functional-fix" "$feature_name" || {
+    20 "$LOG_DIR/feature-$FEATURE_COUNT-functional-check.log" "functional-fix" "$feature_name" || {
     log WARN "Correction fonctionnelle échouée."
   }
 
