@@ -271,38 +271,38 @@ run_claude() {
     implement)
       context_hint="
 CONTEXTE PROJET — Lis dans cet ordre :
-1. codebase/INDEX.md (carte sémantique — TOUJOURS lire en premier)
-2. codebase/auto-map.md (carte auto-générée des exports — vérité du code)
-3. Les fichiers de détail codebase/*.md pertinents pour cette feature (PAS tous)
+1. .orc/codebase/INDEX.md (carte sémantique — TOUJOURS lire en premier)
+2. .orc/codebase/auto-map.md (carte auto-générée des exports — vérité du code)
+3. Les fichiers de détail .orc/codebase/*.md pertinents pour cette feature (PAS tous)
 4. .claude/skills/stack-conventions.md (conventions à respecter)"
       ;;
     fix)
       context_hint="
 CONTEXTE PROJET — Lis si pertinent :
-1. codebase/auto-map.md (pour localiser les modules impliqués)
-2. codebase/security.md (si l'erreur est liée à la sécurité)
+1. .orc/codebase/auto-map.md (pour localiser les modules impliqués)
+2. .orc/codebase/security.md (si l'erreur est liée à la sécurité)
 3. .claude/skills/fix-tests.md (workflow de correction)"
       ;;
     strategy)
       context_hint="
 CONTEXTE PROJET — Lis dans cet ordre :
-1. codebase/INDEX.md (état actuel du projet)
-2. codebase/architecture.md (décisions techniques en place)
-3. research/INDEX.md (insights marché)"
+1. .orc/codebase/INDEX.md (état actuel du projet)
+2. .orc/codebase/architecture.md (décisions techniques en place)
+3. .orc/research/INDEX.md (insights marché)"
       ;;
     reflect)
       context_hint="
 CONTEXTE PROJET — Mets à jour :
-1. codebase/auto-map.md est déjà à jour (auto-généré) — lis-le pour vérifier
-2. codebase/INDEX.md + les fichiers de détail impactés par cette feature
+1. .orc/codebase/auto-map.md est déjà à jour (auto-généré) — lis-le pour vérifier
+2. .orc/codebase/INDEX.md + les fichiers de détail impactés par cette feature
 3. .claude/skills/stack-conventions.md si nouveaux patterns"
       ;;
     meta-retro)
       context_hint="
 CONTEXTE PROJET — Auditer :
-1. codebase/INDEX.md — est-il à jour vs auto-map.md ?
-2. codebase/auto-map.md — vérité du code actuel
-3. Tous les fichiers codebase/*.md — vérifier la cohérence avec le code réel"
+1. .orc/codebase/INDEX.md — est-il à jour vs auto-map.md ?
+2. .orc/codebase/auto-map.md — vérité du code actuel
+3. Tous les fichiers .orc/codebase/*.md — vérifier la cohérence avec le code réel"
       ;;
   esac
 
@@ -485,7 +485,7 @@ FIXEOF
 
 # Lit la prochaine feature non cochée de la ROADMAP
 next_feature() {
-  grep -m1 '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null | sed 's/^- \[ \] //' || true
+  grep -m1 '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null | sed 's/^- \[ \] //' || true
 }
 
 # Nom court pour les branches git (avec fallback si vide)

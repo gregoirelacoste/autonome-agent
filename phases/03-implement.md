@@ -9,18 +9,18 @@ FEATURE À IMPLÉMENTER : {{FEATURE_NAME}}
    - `.orc/codebase/utilities.md` si tu pourrais réutiliser un helper
    - `.orc/codebase/integrations.md` si la feature touche une API/service
    - `.orc/codebase/data-models.md` si tu manipules des données
-   - `codebase/architecture.md` si tu dois comprendre un choix technique
-   - `codebase/security.md` si la feature a un aspect sécurité
+   - `.orc/codebase/architecture.md` si tu dois comprendre un choix technique
+   - `.orc/codebase/security.md` si la feature a un aspect sécurité
    **NE LIS PAS tous les fichiers — uniquement ceux pertinents pour cette feature.**
-2. **codebase/auto-map.md** — la carte auto-générée des exports et classes du code.
+2. **.orc/codebase/auto-map.md** — la carte auto-générée des exports et classes du code.
    C'est la VÉRITÉ du code (généré par l'orchestrateur, pas par l'IA).
    Utilise-le pour localiser rapidement les modules et fonctions existants.
 3. **.claude/skills/stack-conventions.md** — les conventions de la stack.
    Respecte-les. Si un anti-pattern est listé, ne le fais PAS.
 4. Le code existant lié à cette feature
-5. research/INDEX.md pour le contexte marché
-6. La spec de cette feature dans ROADMAP.md
-7. Les insights concurrents dans research/competitors/SYNTHESIS.md
+5. .orc/research/INDEX.md pour le contexte marché
+6. La spec de cette feature dans .orc/ROADMAP.md
+7. Les insights concurrents dans .orc/research/competitors/SYNTHESIS.md
 
 ### Anti-duplication — checklist AVANT de créer du code
 
@@ -47,4 +47,4 @@ Avant de créer une nouvelle fonction, un nouveau composant ou un nouveau helper
 7. Commite de façon atomique avec un message descriptif
 
 Si un concurrent fait mieux que notre spec sur cette feature,
-adapte l'implémentation et note le changement dans ROADMAP.md.
+adapte l'implémentation et note le changement dans .orc/ROADMAP.md.

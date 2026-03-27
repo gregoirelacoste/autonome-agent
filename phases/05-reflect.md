@@ -1,29 +1,29 @@
 PHASE RÉTROSPECTIVE — Feature terminée : {{FEATURE_NAME}}
 Tests passés : {{TESTS_PASSED}} | Tentatives de fix : {{FIX_ATTEMPTS}}
 
-Si un fichier logs/human-feedback-*.md existe pour une feature récente,
+Si un fichier .orc/logs/human-feedback-*.md existe pour une feature récente,
 lis-le attentivement. Le feedback humain est PRIORITAIRE sur tes propres observations.
 
 Analyse cette itération et améliore tes connaissances du projet :
 
-### 1. codebase/ — Index & fichiers de détail (OBLIGATOIRE)
+### 1. .orc/codebase/ — Index & fichiers de détail (OBLIGATOIRE)
 
-Mets à jour les fichiers de détail dans `codebase/` avec ce que tu as créé/modifié :
-- **codebase/modules.md** — nouvelles fonctions, classes, composants exportés
-- **codebase/utilities.md** — tout ce qui est réutilisable (ne pas dupliquer ensuite !)
-- **codebase/integrations.md** — nouvelles APIs/services intégrés
-- **codebase/data-models.md** — nouveaux modèles, types, interfaces partagées
-- **codebase/architecture.md** — si tu as fait un choix technique, note POURQUOI
-- **codebase/security.md** — patterns de sécurité appliqués, vérifications faites
+Mets à jour les fichiers de détail dans `.orc/codebase/` avec ce que tu as créé/modifié :
+- **.orc/codebase/modules.md** — nouvelles fonctions, classes, composants exportés
+- **.orc/codebase/utilities.md** — tout ce qui est réutilisable (ne pas dupliquer ensuite !)
+- **.orc/codebase/integrations.md** — nouvelles APIs/services intégrés
+- **.orc/codebase/data-models.md** — nouveaux modèles, types, interfaces partagées
+- **.orc/codebase/architecture.md** — si tu as fait un choix technique, note POURQUOI
+- **.orc/codebase/security.md** — patterns de sécurité appliqués, vérifications faites
 
 Format pour chaque entrée dans les fichiers de détail :
 `- nom() dans chemin/fichier.ext — description courte de ce que ça fait`
 
-Vérifie **codebase/auto-map.md** (généré automatiquement par l'orchestrateur) :
+Vérifie **.orc/codebase/auto-map.md** (généré automatiquement par l'orchestrateur) :
 - Compare-le avec tes fichiers de détail — y a-t-il des exports non documentés ?
 - Si oui, ajoute-les dans le fichier de détail approprié
 
-Puis mets à jour **codebase/INDEX.md** :
+Puis mets à jour **.orc/codebase/INDEX.md** :
 - Ajoute/modifie le résumé d'une phrase par section impactée
 - L'index doit rester COMPACT (max 40 lignes)
 - L'index est une carte : il dit CE QUI EXISTE et OÙ TROUVER LE DÉTAIL
@@ -50,7 +50,7 @@ Si tu as répété un pattern manuellement plus de 2 fois,
 crée un skill dans .claude/skills/.
 Si un skill existant était inadapté, mets-le à jour.
 
-### 5. ROADMAP.md
+### 5. .orc/ROADMAP.md
 
 Coche la feature terminée.
 Si l'implémentation t'a révélé de nouvelles dépendances,
@@ -63,7 +63,7 @@ features nécessaires, bugs ou améliorations :
 
 ### 6. Architecture & Sécurité
 
-- Si tu as dû contourner l'architecture, note-le dans codebase/architecture.md
+- Si tu as dû contourner l'architecture, note-le dans .orc/codebase/architecture.md
 - Si ça s'accumule, ajoute une tâche de refactoring à la roadmap
 - Note les vérifications de sécurité effectuées (auth, validation, injection, secrets)
 
