@@ -45,7 +45,8 @@ orc_help() {
   printf "${BOLD}orc${NC} — Autonome Agent CLI v%s\n" "$ORC_VERSION"
   echo ""
   printf "  ${BOLD}Projets :${NC}\n"
-  printf "    ${CYAN}orc agent new <nom>${NC}               Créer un projet\n"
+  printf "    ${CYAN}orc agent new <nom>${NC}               Créer (wizard interactif)\n"
+  printf "    ${CYAN}orc agent new <nom> --brief x.md${NC}  Créer depuis un brief (+ clarification IA)\n"
   printf "    ${CYAN}orc agent start <nom>${NC}             Lancer en background\n"
   printf "    ${CYAN}orc agent stop <nom>${NC}              Arrêter proprement\n"
   printf "    ${CYAN}orc agent status${NC}                  Vue d'ensemble\n"
@@ -70,8 +71,75 @@ orc_help() {
   printf "    ${CYAN}orc admin version${NC}                 Version + vérifications\n"
   printf "    ${CYAN}orc admin update${NC}                  Mettre à jour le template\n"
   echo ""
+  printf "  ${BOLD}Documentation :${NC}\n"
+  printf "    ${CYAN}orc docs${NC}                          Index de la documentation\n"
+  printf "    ${CYAN}orc docs <sujet>${NC}                  Ouvrir une page (getting-started, commands, etc.)\n"
+  echo ""
   printf "  ${DIM}Raccourcis : 'orc s' = status, 'orc l <nom>' = logs, 'orc r' = roadmap${NC}\n"
   echo ""
+}
+
+# ============================================================
+# DOCS
+# ============================================================
+
+cmd_docs() {
+  local docs_dir="$ORC_DIR/docs"
+  local subject="${1:-}"
+
+  if [ -z "$subject" ]; then
+    # Afficher l'index
+    if [ -f "$docs_dir/INDEX.md" ]; then
+      echo ""
+      printf "${BOLD}Documentation orc v%s${NC}\n\n" "$ORC_VERSION"
+      printf "  ${CYAN}getting-started${NC}     Installation et premier projet\n"
+      printf "  ${CYAN}init-modes${NC}          Modes d'init (wizard, --brief, etc.)\n"
+      printf "  ${CYAN}commands${NC}            Référence CLI complète\n"
+      printf "  ${CYAN}configuration${NC}       Paramètres et modes d'autonomie\n"
+      printf "  ${CYAN}github${NC}              Intégration GitHub\n"
+      printf "  ${CYAN}human-controls${NC}      Pause, stop, notes, feedback\n"
+      printf "  ${CYAN}faq${NC}                 FAQ et troubleshooting\n"
+      echo ""
+      printf "  Usage : ${CYAN}orc docs <sujet>${NC}\n"
+      printf "  Fichiers : ${DIM}%s/${NC}\n" "$docs_dir"
+      echo ""
+    else
+      die "Dossier docs/ non trouvé dans $ORC_DIR"
+    fi
+    return
+  fi
+
+  # Résoudre le sujet en fichier
+  local file=""
+  case "$subject" in
+    getting-started|start|gs) file="getting-started.md" ;;
+    init-modes|init|modes)    file="init-modes.md" ;;
+    commands|cmd|ref)         file="commands-reference.md" ;;
+    configuration|config|cfg) file="configuration.md" ;;
+    github|gh)                file="github-integration.md" ;;
+    human-controls|human|hc)  file="human-controls.md" ;;
+    faq|help)                 file="faq.md" ;;
+    index)                    file="INDEX.md" ;;
+    *)
+      # Essayer un match direct
+      if [ -f "$docs_dir/${subject}.md" ]; then
+        file="${subject}.md"
+      else
+        die "Doc inconnue : $subject. Voir : orc docs"
+      fi
+      ;;
+  esac
+
+  if [ -f "$docs_dir/$file" ]; then
+    # Utiliser less si disponible, sinon cat
+    if command -v less &>/dev/null; then
+      less "$docs_dir/$file"
+    else
+      cat "$docs_dir/$file"
+    fi
+  else
+    die "Fichier non trouvé : $docs_dir/$file"
+  fi
 }
 
 # ============================================================
@@ -98,6 +166,9 @@ case "$COMMAND" in
   admin)
     source "$ORC_DIR/orc-admin.sh"
     admin_dispatch "$@"
+    ;;
+  docs|d)
+    cmd_docs "$@"
     ;;
   # Raccourcis directs pour les commandes les plus fréquentes
   status|s)

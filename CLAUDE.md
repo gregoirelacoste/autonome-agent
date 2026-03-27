@@ -30,6 +30,7 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 ├── phases/                  ← Prompts Markdown avec placeholders {{VAR}} pour chaque phase (00-07)
 ├── skills-templates/        ← Skills copiées dans project/.claude/skills/ au bootstrap
 ├── codebase/                ← Documentation structurée du système orc lui-même (INDEX.md, functions.md, etc.)
+├── docs/                    ← Documentation utilisateur : guides, tutos, FAQ (→ docs/INDEX.md)
 ├── learnings/               ← Insights inter-projets, copiés au bootstrap, lus par phase 00
 ├── briefs/                  ← Exemples de briefs produit
 ├── roadmap/                 ← Items de roadmap structurés (backlog → planned → in-progress → done)
@@ -58,9 +59,11 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 ## Commandes
 
 ### CLI unifiée (`orc`)
-- `orc agent new|start|stop|status|logs <nom>` — gestion des projets
+- `orc agent new <nom> [--brief x.md] [--no-clarify]` — créer un projet (wizard, brief+clarification, ou brief direct)
+- `orc agent start|stop|status|logs <nom>` — gestion des projets
 - `orc roadmap [--detail|--full] [--priority P1] [--tag x]` — suivi roadmap
 - `orc admin config|model|budget|key|version` — administration
+- `orc docs [sujet]` — documentation utilisateur
 - `orc s` / `orc r` / `orc l <nom>` — raccourcis (status, roadmap, logs)
 
 ### Développement
@@ -89,6 +92,7 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 - **Placeholders** : `{{VAR}}` dans les phases, substitués par `render_phase()`
 - **Pas de données projet ici** : le template ne contient jamais de BRIEF.md ou config.sh spécifique
 - **Tester la syntaxe** : `bash -n orchestrator.sh` avant chaque commit
+- **Documenter les changements** : après chaque modification, utiliser le skill `maintain-docs` pour mettre à jour la doc impactée (docs/, README, help CLI). Lire `docs/INDEX.md` d'abord pour savoir quoi toucher.
 
 ## Patterns importants
 

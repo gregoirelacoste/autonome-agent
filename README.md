@@ -57,10 +57,16 @@ ssh root@<vps-ip> 'bash -s' < deploy.sh
 Claude te pose ~22 questions pour rédiger le brief produit (`BRIEF.md`).
 Le workspace est créé dans `~/projects/mon-projet/`.
 
-Si tu as déjà un brief :
+Si tu as déjà un brief (Claude le lit, pose des questions, l'enrichit) :
 
 ```bash
 ./orc.sh agent new mon-projet --brief briefs/mon-brief.md
+```
+
+Sans clarification (copie le brief tel quel) :
+
+```bash
+./orc.sh agent new mon-projet --brief briefs/mon-brief.md --no-clarify
 ```
 
 ### 2. Configurer (optionnel)
@@ -133,7 +139,9 @@ Configurables dans `.orc/config.sh` :
 ### Projets
 
 ```bash
-orc agent new <nom> [--brief x.md]    # Créer un projet
+orc agent new <nom>                    # Créer un projet (wizard interactif)
+orc agent new <nom> --brief x.md      # Brief existant + clarification IA
+orc agent new <nom> --brief x.md --no-clarify  # Brief direct
 orc agent start <nom>                  # Lancer en background
 orc agent stop <nom>                   # Arrêter proprement
 orc agent restart <nom>                # Redémarrer
@@ -259,5 +267,18 @@ Oui. Éditer les fichiers dans `~/projects/mon-projet/phases/`. Chaque phase est
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Documentation technique complète
+### Guides utilisateur (dans `docs/`)
+
+- [Démarrage rapide](docs/getting-started.md) — Installation et premier projet
+- [Modes d'init](docs/init-modes.md) — Wizard, brief + clarification, brief direct, template
+- [Référence CLI](docs/commands-reference.md) — Toutes les commandes avec exemples
+- [Configuration](docs/configuration.md) — Paramètres, modes d'autonomie
+- [Intégration GitHub](docs/github-integration.md) — PRs, tracking, signals, CI, releases
+- [Contrôle humain](docs/human-controls.md) — Pause, stop, notes, feedback
+- [FAQ & Troubleshooting](docs/faq.md) — Questions fréquentes et résolution de problèmes
+
+### Documentation technique
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — Architecture technique complète
 - [ROADMAP.md](ROADMAP.md) — Historique des versions et roadmap d'orc
+- [codebase/INDEX.md](codebase/INDEX.md) — Carte sémantique du code

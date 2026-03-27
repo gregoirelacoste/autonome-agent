@@ -18,7 +18,12 @@ run_claude(), render_phase(), generate_repo_map(), error_hash(), check_signals()
 Index sémantique codebase/, auto-map, stack-conventions, learnings inter-projets, réflexions structurées, contexte adaptatif.
 
 ## Skills templates (→ codebase/skills.md)
-7 skills copiées dans chaque projet au bootstrap. Auto-enrichies par l'IA.
+8 skills copiées dans chaque projet au bootstrap. Auto-enrichies par l'IA.
+Inclut clarify-brief.md pour le mode --brief avec clarification.
+
+## Documentation utilisateur (→ docs/INDEX.md)
+7 guides dans docs/ : getting-started, init-modes, commands-reference, configuration, github-integration, human-controls, faq.
+Maintenu via le skill .claude/skills/maintain-docs.md.
 
 ## Roadmap ORC (→ roadmap/)
 Items de roadmap pour l'outil lui-même. Fichiers .md dans backlog/planned/in-progress/done.
