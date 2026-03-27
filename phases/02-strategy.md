@@ -2,7 +2,7 @@ PHASE STRATÉGIE
 
 Tu as fait ta recherche initiale. Transforme-la en plan d'action.
 
-1. Lis .orc/.orc/research/INDEX.md et tous les SYNTHESIS.md
+1. Lis .orc/research/INDEX.md et tous les SYNTHESIS.md
 2. Relis .orc/BRIEF.md (la vision immuable)
 
 Produis une .orc/ROADMAP.md structurée en EPICS :

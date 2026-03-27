@@ -342,6 +342,12 @@ EOF
   fi
 fi
 
+# Copier le brief dans project/.orc/ (cohérent avec orc-agent.sh)
+if [ -f "$WORKSPACE_DIR/BRIEF.md" ]; then
+  mkdir -p "$WORKSPACE_DIR/project/.orc"
+  cp "$WORKSPACE_DIR/BRIEF.md" "$WORKSPACE_DIR/project/.orc/BRIEF.md"
+fi
+
 echo ""
 
 # ============================================================
