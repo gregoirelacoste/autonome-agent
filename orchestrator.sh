@@ -877,7 +877,7 @@ gh_create_abandoned_issue() {
 **Feature #** : $FEATURE_COUNT"
 
   # Ajouter les réflexions si disponibles
-  local reflections="$PROJECT_DIR/logs/fix-reflections-$FEATURE_COUNT.md"
+  local reflections="$PROJECT_DIR/.orc/logs/fix-reflections-$FEATURE_COUNT.md"
   if [ -f "$reflections" ]; then
     body="$body
 
@@ -937,7 +937,7 @@ gh_sync_roadmap() {
   repo_slug=$(gh_repo_slug)
   if [ -z "$repo_slug" ]; then return 1; fi
 
-  local roadmap="$PROJECT_DIR/ROADMAP.md"
+  local roadmap="$PROJECT_DIR/.orc/ROADMAP.md"
   if [ ! -f "$roadmap" ]; then return 0; fi
 
   # Fichier de mapping local : feature_name → issue_number
@@ -1240,13 +1240,13 @@ run_quality_gate() {
 # === AUTO REPO MAP ===
 # Génère automatiquement une carte des symboles du projet.
 # Inspiré du "repo map" d'Aider (tree-sitter), version bash/grep.
-# Résultat : codebase/auto-map.md — vérité du code, pas maintenu par l'IA.
+# Résultat : .orc/codebase/auto-map.md — vérité du code, pas maintenu par l'IA.
 
 generate_repo_map() {
   local project_dir="$1"
-  local map_file="$project_dir/codebase/auto-map.md"
+  local map_file="$project_dir/.orc/codebase/auto-map.md"
 
-  mkdir -p "$project_dir/codebase"
+  mkdir -p "$project_dir/.orc/codebase"
 
   {
     echo "# Auto-generated Repo Map"
@@ -1418,7 +1418,7 @@ human_pause() {
     case "$choice" in
       "") continue ;;
       c|C) return 0 ;;
-      r|R) cat "$PROJECT_DIR/ROADMAP.md" 2>/dev/null || echo "Pas de ROADMAP." ; echo "" ;;
+      r|R) cat "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null || echo "Pas de ROADMAP." ; echo "" ;;
       l|L) tail -30 "$LOG_DIR/orchestrator.log" 2>/dev/null ; echo "" ;;
       t|T) print_cost_summary ;;
       d|D)
@@ -1461,8 +1461,8 @@ human_pause() {
 "
         done
         if [ -n "$feedback" ]; then
-          local feedback_file="$PROJECT_DIR/logs/human-feedback-$FEATURE_COUNT.md"
-          mkdir -p "$PROJECT_DIR/logs"
+          local feedback_file="$PROJECT_DIR/.orc/logs/human-feedback-$FEATURE_COUNT.md"
+          mkdir -p "$PROJECT_DIR/.orc/logs"
           cat > "$feedback_file" << FBEOF
 # Feedback humain — Feature #$FEATURE_COUNT
 Date : $(date '+%Y-%m-%d %H:%M:%S')
@@ -1573,15 +1573,17 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
     run_in_project "git init -b main > /dev/null 2>&1"
   fi
 
-  if [ ! -f "$PROJECT_DIR/BRIEF.md" ]; then
-    cp "$SCRIPT_DIR/BRIEF.md" "$PROJECT_DIR/BRIEF.md"
+  mkdir -p "$PROJECT_DIR/.orc"
+
+  if [ ! -f "$PROJECT_DIR/.orc/BRIEF.md" ]; then
+    cp "$SCRIPT_DIR/BRIEF.md" "$PROJECT_DIR/.orc/BRIEF.md"
   fi
 
-  mkdir -p "$PROJECT_DIR/research/competitors" \
-           "$PROJECT_DIR/research/trends" \
-           "$PROJECT_DIR/research/user-needs" \
-           "$PROJECT_DIR/research/regulations" \
-           "$PROJECT_DIR/logs"
+  mkdir -p "$PROJECT_DIR/.orc/research/competitors" \
+           "$PROJECT_DIR/.orc/research/trends" \
+           "$PROJECT_DIR/.orc/research/user-needs" \
+           "$PROJECT_DIR/.orc/research/regulations" \
+           "$PROJECT_DIR/.orc/logs"
 
   # Copier les learnings inter-projets si disponibles
   if compgen -G "$SCRIPT_DIR/learnings/*.md" > /dev/null 2>&1; then
@@ -1618,7 +1620,7 @@ fi
 # PHASE 1 — RECHERCHE INITIALE
 # ============================================================
 
-if [ "$ENABLE_RESEARCH" = true ] && [ ! -f "$PROJECT_DIR/research/INDEX.md" ]; then
+if [ "$ENABLE_RESEARCH" = true ] && [ ! -f "$PROJECT_DIR/.orc/research/INDEX.md" ]; then
   log PHASE "PHASE 1 — RECHERCHE INITIALE"
 
   local_prompt=$(render_phase "01-research.md")
@@ -1631,7 +1633,7 @@ fi
 # PHASE 2 — STRATÉGIE
 # ============================================================
 
-if ! grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
+if ! grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
   log PHASE "PHASE 2 — STRATÉGIE"
 
   local_prompt=$(render_phase "02-strategy.md")
@@ -1681,7 +1683,7 @@ VEILLE CIBLÉE avant la feature : $feature_name
 1. Comment les concurrents gèrent cette fonctionnalité ? (WebSearch + WebFetch)
 2. Best practices UX pour ce type de feature
 3. APIs ou données publiques exploitables
-4. Mets à jour research/ et ajuste les specs dans ROADMAP.md si nécessaire
+4. Mets à jour .orc/research/ et ajuste les specs dans .orc/ROADMAP.md si nécessaire
 EOF
     )" "$MAX_TURNS_RESEARCH_EPIC" "$LOG_DIR/research-epic-$FEATURE_COUNT.log" "research-epic" "$feature_name" || {
       log WARN "Veille ciblée échouée ou timeout — on continue sans."
@@ -1714,7 +1716,7 @@ $gh_feedback"
   fi
 
   # Injecter le feedback humain de la feature précédente si présent
-  prev_feedback="$PROJECT_DIR/logs/human-feedback-$((FEATURE_COUNT - 1)).md"
+  prev_feedback="$PROJECT_DIR/.orc/logs/human-feedback-$((FEATURE_COUNT - 1)).md"
   if [ -f "$prev_feedback" ]; then
     impl_prompt="$impl_prompt
 
@@ -1763,7 +1765,7 @@ $(cat "$prev_feedback")"
       fi
 
       # Réflexion structurée (pattern Reflexion) : l'IA écrit ce qu'elle a tenté et pourquoi ça a échoué
-      reflection_file="$PROJECT_DIR/logs/fix-reflections-$FEATURE_COUNT.md"
+      reflection_file="$PROJECT_DIR/.orc/logs/fix-reflections-$FEATURE_COUNT.md"
       run_claude "Tu viens d'essayer de corriger la feature '$feature_name' (tentative $attempt/$MAX_FIX_ATTEMPTS) et ça a échoué.
 
 BUILD (exit $BUILD_EXIT):
@@ -1777,7 +1779,7 @@ ${TEST_OUTPUT: -1500}
 - **Pourquoi ça a échoué :** [cause racine identifiée]
 - **Ce que je dois essayer :** [nouvelle approche concrète]
 
-Écris cette réflexion dans le fichier logs/fix-reflections-$FEATURE_COUNT.md (append).
+Écris cette réflexion dans le fichier .orc/logs/fix-reflections-$FEATURE_COUNT.md (append).
 Ne modifie PAS le code dans cette étape — uniquement la réflexion." \
         5 "$LOG_DIR/feature-$FEATURE_COUNT-reflection-$attempt.log" "reflection" "$feature_name" || true
 
@@ -1957,9 +1959,9 @@ if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
     evolve_prompt=$(render_phase "07-evolve.md")
     run_claude "$evolve_prompt" 30 "$LOG_DIR/07-evolve.log" "evolve"
 
-    if [ ! -f "$PROJECT_DIR/DONE.md" ] && grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
+    if [ ! -f "$PROJECT_DIR/DONE.md" ] && grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
       # Compter les features ajoutées par l'IA
-      new_features=$(grep -c '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null || echo "0")
+      new_features=$(grep -c '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null || echo "0")
       AI_ROADMAP_ADDS=$((AI_ROADMAP_ADDS + new_features))
       log INFO "Nouvelles features ajoutées par l'IA : $new_features (total IA: $AI_ROADMAP_ADDS)"
 
@@ -1993,10 +1995,10 @@ Le projet est terminé. Analyse l'ensemble des logs pour améliorer
 l'orchestrateur lui-même (pas le projet, l'OUTIL qui pilote les projets).
 
 Lis :
-1. Tous les fichiers logs/retrospective-*.md
-2. Tous les fichiers logs/meta-retrospective-*.md
-3. Tous les fichiers logs/fix-reflections-*.md
-4. Tous les fichiers logs/human-feedback-*.md
+1. Tous les fichiers .orc/logs/retrospective-*.md
+2. Tous les fichiers .orc/logs/meta-retrospective-*.md
+3. Tous les fichiers .orc/logs/fix-reflections-*.md
+4. Tous les fichiers .orc/logs/human-feedback-*.md
 5. Le CLAUDE.md final (les règles que tu t'es auto-ajoutées)
 6. Les skills dans .claude/skills/ (celles que tu as créées)
 
