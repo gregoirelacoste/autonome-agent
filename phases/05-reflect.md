@@ -69,7 +69,7 @@ features nécessaires, bugs ou améliorations :
 
 ### 7. Rétrospective
 
-Écris un résumé dans logs/retrospective-{{N}}.md :
+Écris un résumé dans .orc/logs/retrospective-{{N}}.md :
 - Ce qui a bien marché
 - Ce qui a posé problème
 - Code réutilisé vs créé (mesure de l'anti-duplication)
@@ -77,4 +77,4 @@ features nécessaires, bugs ou améliorations :
 - Temps estimé vs réel (nombre de turns)
 
 Ne modifie PAS le code applicatif dans cette phase.
-Uniquement codebase/, les skills, CLAUDE.md, la roadmap et les logs.
+Uniquement .orc/codebase/, les skills, CLAUDE.md, la roadmap et les logs.

@@ -39,7 +39,7 @@ Avant de créer une nouvelle fonction, un nouveau composant ou un nouveau helper
 4. Lance le build — corrige si erreur
 5. Lance les tests — corrige si erreur
 6. Auto-review (utilise le skill review-own-code) :
-   - Code dupliqué avec l'existant (vérifier dans CODEBASE.md)
+   - Code dupliqué avec l'existant (vérifier dans .orc/codebase/INDEX.md)
    - Failles de sécurité (injection, XSS, secrets, auth)
    - Patterns incohérents avec stack-conventions.md
    - Performance (requêtes N+1, re-renders, chargements inutiles)

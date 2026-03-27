@@ -1,8 +1,8 @@
 PHASE ÉVOLUTION — Toutes les features de la ROADMAP sont terminées.
 
-1. Relis BRIEF.md (la vision originale)
-2. Analyse le projet dans son état actuel (code, tests, research/)
-3. Lis research/INDEX.md et les SYNTHESIS.md
+1. Relis .orc/BRIEF.md (la vision originale)
+2. Analyse le projet dans son état actuel (code, tests, .orc/research/)
+3. Lis .orc/research/INDEX.md et les SYNTHESIS.md
 
 Décide :
 
@@ -13,11 +13,11 @@ Identifie des améliorations, optimisations ou features manquantes :
 - Améliorations UX basées sur les best practices observées
 - Couverture de cas d'usage non adressés
 
-Ajoute-les à ROADMAP.md comme nouveaux epics.
+Ajoute-les à .orc/ROADMAP.md comme nouveaux epics.
 
 Pour chaque ajout, tu DOIS :
-- Citer la section exacte du BRIEF.md que cette feature sert
-- Référencer au moins un insight `high confidence` de research/
+- Citer la section exacte du .orc/BRIEF.md que cette feature sert
+- Référencer au moins un insight `high confidence` de .orc/research/
 - Si aucun lien clair avec le BRIEF → ne pas ajouter la feature
 - Limiter les ajouts à 5 features maximum par cycle d'évolution
 
