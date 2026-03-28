@@ -46,8 +46,11 @@ Surveillance autonome d'un run. Lance Claude en boucle pour diagnostiquer crashe
 orc watch mon-app                    # boucle auto 3min
 orc watch mon-app --interval 5m     # boucle 5min
 orc watch mon-app --interactive     # mode chat opérateur
+orc watch stop mon-app              # arrêter la surveillance
 orc w mon-app                       # raccourci
 ```
+
+**Arrêt** : `Ctrl+C` en foreground, ou `orc watch stop <nom>` depuis un autre terminal.
 
 ### `orc agent stop <nom>`
 
@@ -212,6 +215,8 @@ Met à jour le template orc.
 | `orc db <nom>` | `orc dashboard <nom>` |
 | `orc l <nom>` | `orc agent logs <nom>` |
 | `orc r` | `orc roadmap` |
+| `orc w <nom>` | `orc watch <nom>` |
+| `orc c <nom>` | `orc chat <nom>` |
 
 ## init.sh (legacy)
 

@@ -73,7 +73,7 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 - `orc roadmap [--detail|--full] [--priority P1] [--tag x]` — suivi roadmap
 - `orc admin config|model|budget|key|version` — administration
 - `orc docs [sujet]` — documentation utilisateur
-- `orc watch <nom> [--interval 3m] [--interactive]` — opérateur autonome : surveille, corrige, relance (raccourci `orc w`)
+- `orc watch <nom> [--interval 3m] [--interactive]` — opérateur autonome : surveille, corrige, relance. Arrêt : `orc watch stop <nom>` ou Ctrl+C (raccourci `orc w`)
 - `orc s` / `orc r` / `orc l <nom>` / `orc dash <nom>` / `orc w <nom>` — raccourcis (status, roadmap, logs, dashboard, watch)
 
 ### Développement

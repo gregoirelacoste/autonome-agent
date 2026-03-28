@@ -418,6 +418,7 @@ phases
 .orc/tokens.json
 .orc/.lock
 .orc/.pid
+.orc/.watch-pid
 .orc/tracking-issue
 GITIGNORE
   fi
@@ -1594,6 +1595,7 @@ cmd_adopt() {
       echo ".orc/tokens.json"
       echo ".orc/.lock"
       echo ".orc/.pid"
+      echo ".orc/.watch-pid"
     } >> "$dir/.gitignore"
   fi
 
@@ -1902,6 +1904,38 @@ cmd_dashboard() {
 cmd_watch() {
   local name="${1:-}"
   [ -z "$name" ] && die "Usage : orc watch <nom> [--interval 3m] [--interactive]"
+
+  # Sous-commande stop
+  if [ "$name" = "stop" ]; then
+    local target="${2:-}"
+    [ -z "$target" ] && die "Usage : orc watch stop <nom>"
+    require_project "$target"
+    local target_dir
+    target_dir=$(project_dir "$target")
+    local pid_file="$target_dir/.orc/.watch-pid"
+    if [ -f "$pid_file" ]; then
+      local wpid
+      wpid=$(cat "$pid_file")
+      if kill -0 "$wpid" 2>/dev/null; then
+        kill "$wpid"
+        # Attendre la fin effective (max 5s)
+        local wait_count=0
+        while kill -0 "$wpid" 2>/dev/null && [ "$wait_count" -lt 10 ]; do
+          sleep 0.5
+          wait_count=$((wait_count + 1))
+        done
+        rm -f "$pid_file"
+        printf "${GREEN}Watch arrêté${NC} (PID %s)\n" "$wpid"
+      else
+        rm -f "$pid_file"
+        printf "${YELLOW}Watch déjà arrêté${NC} (PID %s mort, fichier nettoyé)\n" "$wpid"
+      fi
+    else
+      printf "${YELLOW}Pas de watch actif pour %s${NC}\n" "$target"
+    fi
+    return 0
+  fi
+
   require_project "$name"
   shift || true
 
@@ -1955,8 +1989,25 @@ ${skill_content}"
     cd "$ORC_DIR" && claude --append-system-prompt "$watch_prompt"
   else
     # Mode boucle : surveillance continue
+    local pid_file="$dir/.orc/.watch-pid"
+    mkdir -p "$dir/.orc"
+
+    # Vérifier qu'un watch ne tourne pas déjà
+    if [ -f "$pid_file" ]; then
+      local existing_pid
+      existing_pid=$(cat "$pid_file")
+      if kill -0 "$existing_pid" 2>/dev/null; then
+        die "Watch déjà actif pour $name (PID $existing_pid). Arrêter avec : orc watch stop $name"
+      fi
+      rm -f "$pid_file"
+    fi
+
+    # Écrire le PID et nettoyer à la sortie
+    echo $$ > "$pid_file"
+    trap 'rm -f "$pid_file"; printf "\n${DIM}Watch arrêté.${NC}\n"; exit 0' INT TERM EXIT
+
     printf "${BOLD}orc watch${NC} — %s ${CYAN}(boucle toutes les %s)${NC}\n" "$name" "$interval"
-    printf "${DIM}Ctrl+C pour arrêter. --interactive pour le mode chat.${NC}\n\n"
+    printf "${DIM}Arrêter : Ctrl+C ou 'orc watch stop %s'${NC}\n\n" "$name"
 
     while true; do
       local timestamp
@@ -1966,6 +2017,7 @@ ${skill_content}"
       # Lancer Claude en one-shot avec le skill
       local output
       output=$(cd "$ORC_DIR" && claude -p \
+        --dangerously-skip-permissions \
         --append-system-prompt "$watch_prompt" \
         "Vérifie le projet '${name}' maintenant. Projet dir: ${dir}" \
         2>&1) || true

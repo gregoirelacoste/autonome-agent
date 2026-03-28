@@ -101,6 +101,7 @@ L'orchestrateur tourne en background. Le code est généré dans `~/projects/mon
 orc s                     # Vue d'ensemble de tous les projets
 orc s mon-projet          # Détail : features, coût, progression
 orc l mon-projet          # Logs en temps réel
+orc w mon-projet          # Surveillance auto (diagnostique, corrige, relance)
 orc r                     # Roadmap d'orc
 ```
 

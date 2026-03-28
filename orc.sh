@@ -75,6 +75,7 @@ orc_help() {
   printf "    ${CYAN}orc agent logs <nom>${NC}              Logs temps réel\n"
   printf "    ${CYAN}orc watch <nom>${NC}                  Surveillance auto (boucle 3min)\n"
   printf "    ${CYAN}orc watch <nom> --interactive${NC}    Surveillance en mode chat\n"
+  printf "    ${CYAN}orc watch stop <nom>${NC}             Arrêter la surveillance\n"
   echo ""
   printf "  ${BOLD}Roadmap :${NC}\n"
   printf "    ${CYAN}orc roadmap${NC}                       Roadmap orc (développement du template)\n"

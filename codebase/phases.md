@@ -84,6 +84,15 @@
 - Garde-fous : MAX_EVOLVE_CYCLES, MAX_AI_ROADMAP_ADDS, alignement BRIEF
 - Score de maturité : 6 critères /30 (parcours user, CRUD, erreurs, UX, tests, doc)
 - Score >= 24 → DONE, >= 18 → 3 features ciblées, < 18 → corrections prioritaires
-- Option A : ajoute features → relance boucle (while loop interne)
+- Option A : ajoute features → phase 07b alignment → arrêt (si ALIGNMENT_CHECK=true) ou relance
 - Option B : crée DONE.md → fin
 - Modèle : léger
+
+## Phase 07b — Alignment (phases/07b-alignment.md)
+- Placeholders : CYCLE
+- Déclenchement : après evolve Option A (nouvelles features), si ALIGNMENT_CHECK=true
+- Génère `.orc/logs/alignment-report-N.md` : état actuel, écarts brief, propositions
+- Le run s'arrête en état `alignment_pending` après cette phase
+- Au prochain `orc agent start` : wizard interactif (5 questions ciblées)
+- Réponses dans `.orc/logs/alignment-response-N.md`, injectées dans les features suivantes
+- Modèle : léger, timeout 2min
