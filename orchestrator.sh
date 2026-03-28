@@ -459,10 +459,13 @@ update_changelog() {
 preflight_merge() {
   local feature_name="$1"
   local merge_ok=true
+  local max_deletions="${MAX_DELETIONS_PER_FEATURE:-500}"
+  local max_files="${MAX_FILES_PER_FEATURE:-30}"
 
   # 1. Fichiers sensibles modifiés ?
   local sensitive_files
-  sensitive_files=$(run_in_project "git diff --name-only main 2>/dev/null" | grep -iE '\.env$|credentials|\.pem$|\.key$|secret|password' || true)
+  sensitive_files=$(run_in_project "git diff --name-only main 2>/dev/null" | \
+    grep -iE '\.env($|\.)|credentials|\.pem$|\.key$|\.cert$|\.p12$|\.pfx$|secret|password|token\.json|id_rsa|id_ed25519|\.npmrc|\.pypirc|\.htpasswd|service.account' || true)
   if [ -n "$sensitive_files" ]; then
     log ERROR "PREFLIGHT BLOQUÉ : fichiers sensibles modifiés :"
     log ERROR "  $sensitive_files"
@@ -470,34 +473,41 @@ preflight_merge() {
     merge_ok=false
   fi
 
-  # 2. Suppressions massives ? (> 500 deletions ET ratio > 3:1)
-  local additions deletions
-  additions=$(run_in_project "git diff --stat main 2>/dev/null | tail -1 | grep -oP '\\d+ insertion' | grep -oP '\\d+'" || echo "0")
-  deletions=$(run_in_project "git diff --stat main 2>/dev/null | tail -1 | grep -oP '\\d+ deletion' | grep -oP '\\d+'" || echo "0")
+  # 2. Suppressions massives ? (seuil configurable, ratio > 3:1 ou suppression pure)
+  local diff_stat additions deletions
+  diff_stat=$(run_in_project "git diff --stat main 2>/dev/null | tail -1" || echo "")
+  additions=$(echo "$diff_stat" | awk '{for(i=1;i<=NF;i++) if($i ~ /insertion/) print $(i-1)}')
+  deletions=$(echo "$diff_stat" | awk '{for(i=1;i<=NF;i++) if($i ~ /deletion/) print $(i-1)}')
   additions=${additions:-0}; deletions=${deletions:-0}
-  if [ "$deletions" -gt 500 ] 2>/dev/null; then
-    local ratio=0
-    [ "$additions" -gt 0 ] && ratio=$(( deletions / additions ))
-    if [ "$ratio" -gt 3 ] 2>/dev/null; then
-      log ERROR "PREFLIGHT BLOQUÉ : suppressions massives ($deletions deletions, ratio $ratio:1)"
-      notify "ALERTE : feature '$feature_name' supprime massivement ($deletions lignes)"
+
+  if [ "$deletions" -gt "$max_deletions" ] 2>/dev/null; then
+    if [ "$additions" -eq 0 ] 2>/dev/null; then
+      # Suppression pure — toujours bloquant
+      log ERROR "PREFLIGHT BLOQUÉ : suppression pure ($deletions deletions, 0 additions)"
       merge_ok=false
+    else
+      local ratio=$(( deletions / additions ))
+      if [ "$ratio" -gt 3 ] 2>/dev/null; then
+        log ERROR "PREFLIGHT BLOQUÉ : suppressions massives ($deletions deletions, ratio $ratio:1)"
+        merge_ok=false
+      fi
     fi
+    [ "$merge_ok" = false ] && notify "ALERTE : feature '$feature_name' supprime massivement ($deletions lignes)"
   fi
 
   # 3. Fichiers protégés ? (CI config)
   local protected_modified
-  protected_modified=$(run_in_project "git diff --name-only main 2>/dev/null" | grep -iE '\.github/workflows|\.gitlab-ci|Dockerfile|docker-compose' || true)
+  protected_modified=$(run_in_project "git diff --name-only main 2>/dev/null" | \
+    grep -iE '\.github/workflows|\.gitlab-ci|Dockerfile|docker-compose' || true)
   if [ -n "$protected_modified" ]; then
     log WARN "PREFLIGHT WARNING : fichiers CI/infra modifiés : $protected_modified"
-    # Warning seulement, pas bloquant
   fi
 
-  # 4. Trop de fichiers modifiés ? (alerte > 30)
+  # 4. Trop de fichiers modifiés ?
   local files_count
   files_count=$(run_in_project "git diff --name-only main 2>/dev/null | wc -l" || echo "0")
-  if [ "$files_count" -gt 30 ] 2>/dev/null; then
-    log WARN "PREFLIGHT WARNING : $files_count fichiers modifiés (seuil: 30)"
+  if [ "$files_count" -gt "$max_files" ] 2>/dev/null; then
+    log WARN "PREFLIGHT WARNING : $files_count fichiers modifiés (seuil: $max_files)"
   fi
 
   if [ "$merge_ok" = false ]; then
@@ -538,10 +548,11 @@ generate_change_report() {
     echo ""
 
     echo "## Métriques"
-    local files additions deletions
+    local files additions deletions diff_stat_line
     files=$(run_in_project "git diff --name-only main 2>/dev/null | wc -l" || echo "0")
-    additions=$(run_in_project "git diff --stat main 2>/dev/null | tail -1 | grep -oP '\\d+ insertion' | grep -oP '\\d+'" || echo "0")
-    deletions=$(run_in_project "git diff --stat main 2>/dev/null | tail -1 | grep -oP '\\d+ deletion' | grep -oP '\\d+'" || echo "0")
+    diff_stat_line=$(run_in_project "git diff --stat main 2>/dev/null | tail -1" || echo "")
+    additions=$(echo "$diff_stat_line" | awk '{for(i=1;i<=NF;i++) if($i ~ /insertion/) print $(i-1)}')
+    deletions=$(echo "$diff_stat_line" | awk '{for(i=1;i<=NF;i++) if($i ~ /deletion/) print $(i-1)}')
     echo "- Fichiers : ${files:-0}"
     echo "- Lignes ajoutées : ${additions:-0}"
     echo "- Lignes supprimées : ${deletions:-0}"
@@ -2675,7 +2686,7 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
     local cov_output cov_exit cov_percent prev_cov
     cov_output=$(run_in_project "$COVERAGE_COMMAND 2>&1") && cov_exit=0 || cov_exit=$?
     # Extraire le % de couverture (cherche le pattern XX.X% ou XX%)
-    cov_percent=$(echo "$cov_output" | grep -oP '\d+\.?\d*%' | tail -1 | tr -d '%' || echo "")
+    cov_percent=$(echo "$cov_output" | grep -Eo '[0-9]+\.?[0-9]*%' | tail -1 | tr -d '%' || echo "")
     if [ -n "$cov_percent" ]; then
       log INFO "Couverture : ${cov_percent}%"
       # Tracker dans state.json
@@ -2702,8 +2713,10 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
   # Métriques bash pré-calculées (évite que Claude perde des turns à les collecter)
   local files_changed lines_added lines_deleted
   files_changed=$(run_in_project "git diff --name-only HEAD~1 2>/dev/null | wc -l" || echo "?")
-  lines_added=$(run_in_project "git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oP '\\d+ insertion' | grep -oP '\\d+'" || echo "?")
-  lines_deleted=$(run_in_project "git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oP '\\d+ deletion' | grep -oP '\\d+'" || echo "?")
+  local reflect_stat
+  reflect_stat=$(run_in_project "git diff --stat HEAD~1 2>/dev/null | tail -1" || echo "")
+  lines_added=$(echo "$reflect_stat" | awk '{for(i=1;i<=NF;i++) if($i ~ /insertion/) print $(i-1)}')
+  lines_deleted=$(echo "$reflect_stat" | awk '{for(i=1;i<=NF;i++) if($i ~ /deletion/) print $(i-1)}')
 
   reflect_prompt=$(render_phase "05-reflect.md" \
     "FEATURE_NAME=$feature_name" \
