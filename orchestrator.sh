@@ -59,6 +59,39 @@ LAST_FUNCTIONAL_CHECK="null"
 RUN_STATUS="running"
 RUN_ENDED_AT=""
 
+# === STATE MACHINE ===
+# Pilote le workflow global. Transitions valides :
+#   init → bootstrap → research → strategy → features → evolve → features (cycle)
+#   evolve → post-project → done
+#   Tout état → crashed/stopped/budget_exceeded (via cleanup/signaux)
+WORKFLOW_PHASE="init"
+
+# Transition de la state machine avec validation
+workflow_transition() {
+  local target="$1"
+  local valid=false
+  case "$WORKFLOW_PHASE→$target" in
+    init→bootstrap|init→research|init→strategy|init→features) valid=true ;;  # premier lancement
+    crashed→bootstrap|crashed→research|crashed→strategy|crashed→features) valid=true ;;  # reprise après crash
+    bootstrap→research|bootstrap→strategy|bootstrap→features) valid=true ;;
+    research→strategy|research→features) valid=true ;;
+    strategy→features) valid=true ;;
+    # Self-transitions (reprise dans le même état après crash/restart)
+    bootstrap→bootstrap|research→research|strategy→strategy|features→features|evolve→evolve) valid=true ;;
+    features→evolve|features→post-project) valid=true ;;
+    evolve→features|evolve→post-project) valid=true ;;
+    post-project→done) valid=true ;;
+    *→crashed|*→stopped|*→budget_exceeded) valid=true ;;  # sorties d'urgence
+  esac
+  if [ "$valid" = true ]; then
+    log INFO "Workflow: $WORKFLOW_PHASE → $target"
+    WORKFLOW_PHASE="$target"
+    save_state
+  else
+    log WARN "Transition workflow invalide : $WORKFLOW_PHASE → $target (ignorée)"
+  fi
+}
+
 # === TRACKING TOKENS ===
 TOKENS_FILE="$SCRIPT_DIR/.orc/tokens.json"
 TOTAL_INPUT_TOKENS=0
@@ -101,7 +134,7 @@ get_model_pricing() {
 
 # Phases légères qui utilisent CLAUDE_MODEL_LIGHT si disponible
 # Phases non-code : pas besoin du modèle principal (text, recherche web, décision)
-LIGHT_PHASES="plan reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve"
+LIGHT_PHASES="plan critic reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve"
 
 # Résoudre le modèle effectif pour une phase donnée
 # Usage: resolve_model "reflection" → affiche le modèle à utiliser
@@ -133,6 +166,7 @@ cleanup() {
   # Marquer le statut si pas déjà fait (= crash ou signal)
   if [ "$RUN_STATUS" = "running" ]; then
     RUN_STATUS="crashed"
+    WORKFLOW_PHASE="crashed"
     RUN_ENDED_AT=$(date -Iseconds)
     log ERROR "Run interrompu (crash ou signal)."
     # Diagnostic : écrire les dernières lignes du log pour le status
@@ -237,6 +271,7 @@ save_state() {
       --argjson functional_check_passed "${LAST_FUNCTIONAL_CHECK:-null}" \
       --arg run_status "${RUN_STATUS:-running}" \
       --arg run_ended_at "${RUN_ENDED_AT:-}" \
+      --arg workflow_phase "${WORKFLOW_PHASE:-init}" \
       '{
         feature_count: $feature_count,
         epic_feature_count: $epic_feature_count,
@@ -250,12 +285,13 @@ save_state() {
         features_timeline: $features_timeline,
         functional_check_passed: $functional_check_passed,
         run_status: $run_status,
-        run_ended_at: $run_ended_at
+        run_ended_at: $run_ended_at,
+        workflow_phase: $workflow_phase
       }' > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
   else
     # Fallback sans jq — format simple
     cat > "$STATE_FILE" << STATEEOF
-{"feature_count":$FEATURE_COUNT,"epic_feature_count":$EPIC_FEATURE_COUNT,"total_failures":$TOTAL_FAILURES,"evolve_cycles":$EVOLVE_CYCLES,"ai_roadmap_adds":$AI_ROADMAP_ADDS,"run_status":"${RUN_STATUS:-running}","run_ended_at":"${RUN_ENDED_AT:-}"}
+{"feature_count":$FEATURE_COUNT,"epic_feature_count":$EPIC_FEATURE_COUNT,"total_failures":$TOTAL_FAILURES,"evolve_cycles":$EVOLVE_CYCLES,"ai_roadmap_adds":$AI_ROADMAP_ADDS,"run_status":"${RUN_STATUS:-running}","run_ended_at":"${RUN_ENDED_AT:-}","workflow_phase":"${WORKFLOW_PHASE:-init}"}
 STATEEOF
   fi
 }
@@ -276,7 +312,11 @@ restore_state() {
     saved_run_started=$(jq -r '.run_started_at // ""' "$STATE_FILE")
     [ -n "$saved_run_started" ] && RUN_STARTED_AT="$saved_run_started"
     FEATURES_TIMELINE=$(jq -c '.features_timeline // []' "$STATE_FILE")
-    log INFO "État restauré : features=$FEATURE_COUNT, échecs=$TOTAL_FAILURES, evolve_cycles=$EVOLVE_CYCLES"
+    # Restaurer la state machine
+    local saved_workflow
+    saved_workflow=$(jq -r '.workflow_phase // "init"' "$STATE_FILE")
+    [ -n "$saved_workflow" ] && WORKFLOW_PHASE="$saved_workflow"
+    log INFO "État restauré : features=$FEATURE_COUNT, échecs=$TOTAL_FAILURES, evolve_cycles=$EVOLVE_CYCLES, workflow=$WORKFLOW_PHASE"
   fi
 }
 
@@ -1934,6 +1974,7 @@ fi
 # ============================================================
 
 if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
+  workflow_transition "bootstrap"
   log PHASE "PHASE 0 — BOOTSTRAP"
 
   if [ ! -d "$PROJECT_DIR/.git" ]; then
@@ -1989,6 +2030,7 @@ fi
 # ============================================================
 
 if [ "$ENABLE_RESEARCH" = true ] && [ ! -f "$PROJECT_DIR/.orc/research/INDEX.md" ]; then
+  workflow_transition "research"
   log PHASE "PHASE 1 — RECHERCHE INITIALE"
 
   local_prompt=$(render_phase "01-research.md")
@@ -2002,6 +2044,7 @@ fi
 # ============================================================
 
 if ! grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
+  workflow_transition "strategy"
   log PHASE "PHASE 2 — STRATÉGIE"
 
   local_prompt=$(render_phase "02-strategy.md")
@@ -2016,6 +2059,7 @@ fi
 # ============================================================
 
 # Boucle englobante : feature loop + evolve, sans exec "$0" restart
+workflow_transition "features"
 MAIN_LOOP_CONTINUE=true
 while [ "$MAIN_LOOP_CONTINUE" = true ]; do
 
@@ -2154,6 +2198,14 @@ Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/s
       log INFO "Lint OK."
     fi
   fi
+
+  # --- Review adversariale (modèle léger, détecte les bugs évidents) ---
+  update_phase_tracking "critic" "$feature_name"
+  log INFO "Review adversariale en cours..."
+  critic_prompt=$(render_phase "03b-critic.md" "FEATURE_NAME=$feature_name")
+  run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" || {
+    log WARN "Review adversariale échouée — on continue."
+  }
 
   # --- Test & Fix Loop (avec détection de boucle) ---
   update_phase_tracking "test-fix" "$feature_name"
@@ -2423,6 +2475,7 @@ done
 # ============================================================
 
 if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
+  workflow_transition "evolve"
   EVOLVE_CYCLES=$((EVOLVE_CYCLES + 1))
   max_evolve="${MAX_EVOLVE_CYCLES:-0}"
 
@@ -2451,6 +2504,7 @@ if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
       fi
 
       log INFO "Nouvelles features ajoutées — relancement de la boucle."
+      workflow_transition "features"
       save_state
       # Relancer la boucle englobante au lieu de exec "$0"
     else
@@ -2467,6 +2521,7 @@ done  # fin MAIN_LOOP (while MAIN_LOOP_CONTINUE)
 # PHASE POST-PROJET — AUTO-AMÉLIORATION DE L'ORCHESTRATEUR
 # ============================================================
 
+workflow_transition "post-project"
 notify "Projet terminé ! Features: $FEATURE_COUNT, Échecs: $TOTAL_FAILURES, Coût: \$$TOTAL_COST_USD"
 log PHASE "AUTO-AMÉLIORATION DE L'ORCHESTRATEUR"
 
@@ -2602,6 +2657,7 @@ if [ -n "${FUNCTIONAL_CHECK_COMMAND:-}" ]; then
   save_state
 fi
 
+workflow_transition "done"
 CURRENT_PHASE="done"
 CURRENT_FEATURE=""
 RUN_STATUS="completed"

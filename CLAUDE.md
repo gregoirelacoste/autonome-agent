@@ -143,8 +143,14 @@ Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `.orc/research/IN
 ### Mémoire inter-features (known-issues.md)
 `.orc/known-issues.md` : alimenté automatiquement quand un fix réussit après des échecs. Contient la réflexion qui a mené au fix. Injecté dans le prompt de fix des features suivantes pour ne pas répéter les mêmes erreurs.
 
+### Review adversariale (critic)
+`phases/03b-critic.md` — 10 turns max, modèle léger. Exécutée entre implement+lint et les tests. Review le diff vs main pour trouver les bugs évidents (imports manquants, typos, logique inversée) et les corriger AVANT le cycle de test coûteux.
+
 ### Lint pré-tests
-Si `LINT_COMMAND` est défini, exécuté entre implement et la boucle test/fix. En cas d'échec, correction automatique par Claude (10 turns max) avant de lancer les tests.
+Si `LINT_COMMAND` est défini, exécuté entre implement et la review adversariale. En cas d'échec, correction automatique par Claude (10 turns max) avant de lancer les tests.
+
+### State machine (workflow_phase)
+`WORKFLOW_PHASE` dans `state.json` pilote le workflow global. Transitions validées par `workflow_transition()` : init → bootstrap → research → strategy → features → evolve → features (cycle) → post-project → done. Les guards fichier existants (CLAUDE.md, ROADMAP.md, etc.) restent comme filet de sécurité. La reprise après crash utilise `WORKFLOW_PHASE` pour savoir où reprendre.
 
 ### GitHub Integration (local-first, GitHub-augmented)
 **Principe** : local = source de vérité, GitHub = miroir de visibilité. Tout fonctionne sans GitHub. Chaque option est indépendante et off par défaut.
