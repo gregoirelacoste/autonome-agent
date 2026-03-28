@@ -10,8 +10,8 @@ user_invocable: true
 - TOUJOURS citer la source (URL exacte)
 - TOUJOURS finir par "**Impact produit :** ..."
 - Ne JAMAIS ajouter une feature au roadmap sans justification sourcée
-- Mettre à jour SYNTHESIS.md à chaque nouvelle recherche
-- INDEX.md ne dépasse jamais 50 lignes
+- Mettre à jour .orc/research/SYNTHESIS.md à chaque nouvelle recherche
+- .orc/research/INDEX.md ne dépasse jamais 50 lignes
 
 ## Template fiche concurrent
 

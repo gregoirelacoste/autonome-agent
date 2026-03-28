@@ -105,28 +105,25 @@ cmd_new() {
 
   # Créer le workspace
   mkdir -p "$dir"
-  cp "$TEMPLATE_DIR/orchestrator.sh" "$dir/"
-  cp -r "$TEMPLATE_DIR/phases" "$dir/"
-  cp -r "$TEMPLATE_DIR/skills-templates" "$dir/"
+  ln -sf "$TEMPLATE_DIR/orchestrator.sh" "$dir/orchestrator.sh"
+  ln -sf "$TEMPLATE_DIR/phases" "$dir/phases"
   cp "$TEMPLATE_DIR/BRIEF.template.md" "$dir/"
-  chmod +x "$dir/orchestrator.sh"
   mkdir -p "$dir/.orc/logs"
   cp "$TEMPLATE_DIR/config.default.sh" "$dir/.orc/config.sh"
 
-  # Créer project/ avec son propre git
-  mkdir -p "$dir/project"
-  ( cd "$dir/project" && git init -b main > /dev/null 2>&1 )
+  # Initialiser git dans le workspace
+  [ -d "$dir/.git" ] || ( cd "$dir" && git init -b main > /dev/null 2>&1 )
 
   # Structure research/
-  mkdir -p "$dir/project/research/competitors" \
-           "$dir/project/research/trends" \
-           "$dir/project/research/user-needs" \
-           "$dir/project/research/regulations" \
-           "$dir/project/logs"
+  mkdir -p "$dir/.orc/research/competitors" \
+           "$dir/.orc/research/trends" \
+           "$dir/.orc/research/user-needs" \
+           "$dir/.orc/research/regulations" \
+           "$dir/.orc/logs"
 
   # Skills
-  mkdir -p "$dir/project/.claude/skills"
-  cp "$dir/skills-templates/"*.md "$dir/project/.claude/skills/"
+  mkdir -p "$dir/.claude/skills"
+  cp "$TEMPLATE_DIR/skills-templates/"*.md "$dir/.claude/skills/"
 
   printf "  ${GREEN}✓${NC} Workspace créé : %s\n" "$dir"
 
@@ -142,14 +139,14 @@ cmd_new() {
     fi
 
     cp "$resolved_brief" "$dir/BRIEF.md"
-    cp "$resolved_brief" "$dir/project/BRIEF.md"
+    cp "$resolved_brief" "$dir/.orc/BRIEF.md"
     printf "  ${GREEN}✓${NC} Brief copié depuis %s\n" "$brief_file"
   else
     # Mode interactif — Claude rédige le brief
     printf "\n  ${CYAN}Claude va te poser des questions pour rédiger le brief...${NC}\n\n"
 
     local brief_skill
-    brief_skill=$(cat "$dir/skills-templates/write-brief.md")
+    brief_skill=$(cat "$TEMPLATE_DIR/skills-templates/write-brief.md")
 
     ( cd "$dir" && claude "$brief_skill
 
@@ -159,7 +156,7 @@ L'utilisateur crée un projet appelé \"$name\".
 Pose les questions une par une. Écris le résultat dans BRIEF.md." --max-turns 40 )
 
     if [ -f "$dir/BRIEF.md" ]; then
-      cp "$dir/BRIEF.md" "$dir/project/BRIEF.md"
+      cp "$dir/BRIEF.md" "$dir/.orc/BRIEF.md"
       printf "\n  ${GREEN}✓${NC} Brief rédigé\n"
     else
       printf "\n  ${YELLOW}⚠${NC} Brief non créé. Rédige-le manuellement :\n"
@@ -297,7 +294,7 @@ cmd_status() {
 
     # Status
     local status status_color
-    if [ -f "$proj_dir/project/DONE.md" ]; then
+    if [ -f "$proj_dir/DONE.md" ]; then
       status="done"
       status_color="$GREEN"
     elif is_running "$proj_name"; then
@@ -328,9 +325,9 @@ cmd_status() {
 
     # Roadmap
     local remaining="—"
-    if [ -f "$proj_dir/project/ROADMAP.md" ]; then
+    if [ -f "$proj_dir/.orc/ROADMAP.md" ]; then
       local todo
-      todo=$(grep -c '^\- \[ \]' "$proj_dir/project/ROADMAP.md" 2>/dev/null || echo "0")
+      todo=$(grep -c '^\- \[ \]' "$proj_dir/.orc/ROADMAP.md" 2>/dev/null || true)
       if [ "$todo" -eq 0 ] && [ "$status" = "done" ]; then
         remaining="terminé"
       else
@@ -361,7 +358,7 @@ cmd_status_detail() {
   printf "  Dossier : %s\n" "$dir"
 
   # Status
-  if [ -f "$dir/project/DONE.md" ]; then
+  if [ -f "$dir/DONE.md" ]; then
     printf "  Status : ${GREEN}terminé${NC}\n"
   elif is_running "$name"; then
     local pid
@@ -390,10 +387,10 @@ cmd_status_detail() {
   fi
 
   # Roadmap
-  if [ -f "$dir/project/ROADMAP.md" ]; then
+  if [ -f "$dir/.orc/ROADMAP.md" ]; then
     local done todo
-    done=$(grep -c '^\- \[x\]' "$dir/project/ROADMAP.md" 2>/dev/null || echo "0")
-    todo=$(grep -c '^\- \[ \]' "$dir/project/ROADMAP.md" 2>/dev/null || echo "0")
+    done=$(grep -c '^\- \[x\]' "$dir/.orc/ROADMAP.md" 2>/dev/null || true)
+    todo=$(grep -c '^\- \[ \]' "$dir/.orc/ROADMAP.md" 2>/dev/null || true)
     printf "  Roadmap : %s faites, %s restantes\n" "$done" "$todo"
   fi
 
@@ -656,7 +653,7 @@ cmd_roadmap() {
         done)        status_label="TERMINÉ" ;;
         *)           status_label="$status" ;;
       esac
-      count_in_status=$(echo "$sorted_items" | grep -c "|${status}|" 2>/dev/null || echo "0")
+      count_in_status=$(echo "$sorted_items" | grep -c "|${status}|" 2>/dev/null || true)
       echo ""
       printf " ${BOLD}%s${NC} (%d)\n" "$status_label" "$count_in_status"
     fi

@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# Bash 4+ requis pour declare -A (associative arrays)
+if ((BASH_VERSINFO[0] < 4)); then
+  echo "ERREUR: bash 4+ requis (actuel: $BASH_VERSION). Sur macOS: brew install bash" >&2
+  exit 1
+fi
+
 # ============================================================
 # Agent Autonome Claude — Orchestrateur principal
 # ============================================================
@@ -8,8 +14,8 @@ set -euo pipefail
 # Usage :
 #   ./orchestrator.sh    — lance l'agent autonome (BRIEF.md requis)
 #
-# Ce script doit être lancé depuis un workspace créé par init.sh.
-# Il crée project/ (si pas déjà fait) et pilote Claude en boucle.
+# Ce script doit être lancé depuis un workspace créé par orc agent new.
+# Il pilote Claude en boucle pour développer les features de la roadmap.
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,15 +49,107 @@ EVOLVE_CYCLES=0
 AI_ROADMAP_ADDS=0
 STATE_FILE="$SCRIPT_DIR/.orc/state.json"
 
+# === TRACKING ENRICHI ===
+CURRENT_FEATURE=""
+CURRENT_PHASE=""
+PHASE_STARTED_AT=""
+RUN_STARTED_AT=$(date -Iseconds)
+FEATURES_TIMELINE="[]"
+LAST_FUNCTIONAL_CHECK="null"
+RUN_STATUS="running"
+RUN_ENDED_AT=""
+
+# === STATE MACHINE ===
+# Pilote le workflow global. Transitions valides :
+#   init → bootstrap → research → strategy → features → evolve → features (cycle)
+#   evolve → post-project → done
+#   Tout état → crashed/stopped/budget_exceeded (via cleanup/signaux)
+WORKFLOW_PHASE="init"
+
+# Transition de la state machine avec validation
+workflow_transition() {
+  local target="$1"
+  local valid=false
+  case "$WORKFLOW_PHASE→$target" in
+    init→bootstrap|init→research|init→strategy|init→features) valid=true ;;  # premier lancement
+    crashed→bootstrap|crashed→research|crashed→strategy|crashed→features) valid=true ;;  # reprise après crash
+    stopped→bootstrap|stopped→research|stopped→strategy|stopped→features) valid=true ;;  # reprise après arrêt
+    budget_exceeded→bootstrap|budget_exceeded→research|budget_exceeded→strategy|budget_exceeded→features) valid=true ;;  # reprise après budget
+    done→bootstrap|done→research|done→strategy|done→features) valid=true ;;  # relancement volontaire
+    bootstrap→research|bootstrap→strategy|bootstrap→features) valid=true ;;
+    research→strategy|research→features) valid=true ;;
+    strategy→features) valid=true ;;
+    # Self-transitions (reprise dans le même état après crash/restart)
+    bootstrap→bootstrap|research→research|strategy→strategy|features→features|evolve→evolve) valid=true ;;
+    features→evolve|features→post-project) valid=true ;;
+    evolve→features|evolve→post-project) valid=true ;;
+    post-project→done) valid=true ;;
+    *→crashed|*→stopped|*→budget_exceeded) valid=true ;;  # sorties d'urgence
+  esac
+  if [ "$valid" = true ]; then
+    log INFO "Workflow: $WORKFLOW_PHASE → $target"
+    WORKFLOW_PHASE="$target"
+    save_state
+  else
+    log WARN "Transition workflow invalide : $WORKFLOW_PHASE → $target (ignorée)"
+  fi
+}
+
 # === TRACKING TOKENS ===
 TOKENS_FILE="$SCRIPT_DIR/.orc/tokens.json"
 TOTAL_INPUT_TOKENS=0
 TOTAL_OUTPUT_TOKENS=0
 TOTAL_COST_USD=0
 
-# Coût par token (Claude Opus 4, en USD) — ajuster selon le modèle
-COST_PER_INPUT_TOKEN=0.000015
-COST_PER_OUTPUT_TOKEN=0.000075
+# Pricing dynamique par modèle (USD par token)
+# Clé = préfixe du modèle, valeur = "input_cost:output_cost"
+declare -A MODEL_PRICING=(
+  ["claude-opus-4"]="0.000015:0.000075"
+  ["claude-sonnet-4"]="0.000003:0.000015"
+  ["claude-haiku-4"]="0.0000008:0.000004"
+)
+# Fallback si modèle inconnu (tarif Sonnet = raisonnable par défaut)
+DEFAULT_COST_PER_INPUT_TOKEN=0.000003
+DEFAULT_COST_PER_OUTPUT_TOKEN=0.000015
+
+# Résoudre le pricing pour un modèle donné
+# Usage: get_model_pricing "claude-sonnet-4-6-20250514" → set COST_PER_INPUT_TOKEN et COST_PER_OUTPUT_TOKEN
+# Note: itère les préfixes du plus long au plus court pour éviter les matchs ambigus
+get_model_pricing() {
+  local model="${1:-}"
+  COST_PER_INPUT_TOKEN="$DEFAULT_COST_PER_INPUT_TOKEN"
+  COST_PER_OUTPUT_TOKEN="$DEFAULT_COST_PER_OUTPUT_TOKEN"
+  # Trier les préfixes par longueur décroissante (le plus spécifique matche d'abord)
+  local sorted_prefixes
+  sorted_prefixes=$(for p in "${!MODEL_PRICING[@]}"; do echo "$p"; done | awk '{print length, $0}' | sort -rn | cut -d' ' -f2-)
+  while IFS= read -r prefix; do
+    if [[ "$model" == "$prefix"* ]]; then
+      COST_PER_INPUT_TOKEN="${MODEL_PRICING[$prefix]%%:*}"
+      COST_PER_OUTPUT_TOKEN="${MODEL_PRICING[$prefix]##*:}"
+      return 0
+    fi
+  done <<< "$sorted_prefixes"
+  # Aucun préfixe connu n'a matché — warning pour visibilité
+  if [ -n "$model" ]; then
+    log WARN "Modèle '$model' inconnu dans MODEL_PRICING — fallback tarif Sonnet (\$${DEFAULT_COST_PER_INPUT_TOKEN}/\$${DEFAULT_COST_PER_OUTPUT_TOKEN})"
+  fi
+}
+
+# Phases légères qui utilisent CLAUDE_MODEL_LIGHT si disponible
+# Phases non-code : pas besoin du modèle principal (text, recherche web, décision)
+# Phases légères (modèle léger). Critic + tech-debt utilisent le modèle PRINCIPAL
+LIGHT_PHASES="plan acceptance reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve user-docs"
+
+# Résoudre le modèle effectif pour une phase donnée
+# Usage: resolve_model "reflection" → affiche le modèle à utiliser
+resolve_model() {
+  local phase="$1"
+  if [ -n "${CLAUDE_MODEL_LIGHT:-}" ] && [[ " $LIGHT_PHASES " == *" $phase "* ]]; then
+    echo "$CLAUDE_MODEL_LIGHT"
+  else
+    echo "${CLAUDE_MODEL:-}"
+  fi
+}
 
 # === LOCKFILE ===
 LOCKFILE="$SCRIPT_DIR/.orc/.lock"
@@ -69,6 +167,16 @@ cleanup() {
   fi
   # Nettoyer le fichier temporaire
   [ -n "$TMP_JSON" ] && rm -f "$TMP_JSON"
+  # Marquer le statut si pas déjà fait (= crash ou signal)
+  if [ "$RUN_STATUS" = "running" ]; then
+    RUN_STATUS="crashed"
+    WORKFLOW_PHASE="crashed"
+    RUN_ENDED_AT=$(date -Iseconds)
+    log ERROR "Run interrompu (crash ou signal)."
+    # Diagnostic : écrire les dernières lignes du log pour le status
+    write_action_required "Le run a crashé pendant la phase '${CURRENT_PHASE:-inconnue}'" \
+      "$(tail -20 "$LOG_DIR/orchestrator.log" 2>/dev/null | grep -v '^\[' | head -10)"
+  fi
   # Sauvegarder l'état
   save_state
   # Libérer le lock
@@ -78,7 +186,103 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+# === ACTION REQUIRED ===
+
+# Écrit un fichier .orc/action-required lisible par orc status
+write_action_required() {
+  local title="$1"
+  local details="${2:-}"
+  local action_file="$SCRIPT_DIR/.orc/action-required"
+  {
+    echo "# Action requise"
+    echo ""
+    echo "**$title**"
+    echo ""
+    if [ -n "$details" ]; then
+      echo '```'
+      echo "$details"
+      echo '```'
+      echo ""
+    fi
+    echo "Feature : ${CURRENT_FEATURE:-inconnue}"
+    echo "Phase : ${CURRENT_PHASE:-inconnue}"
+    echo "Date : $(date '+%Y-%m-%d %H:%M:%S')"
+  } > "$action_file"
+}
+
+# Efface le fichier action-required (appelé au démarrage)
+clear_action_required() {
+  rm -f "$SCRIPT_DIR/.orc/action-required"
+}
+
+# Apprentissage adaptatif : calcule un max_turns optimal basé sur l'historique
+# Utilise le p75 des turns passés + 30% de marge, avec un minimum plancher
+# Usage: adaptive_max_turns "implement" 50  → affiche le max_turns recommandé
+adaptive_max_turns() {
+  local phase="$1"
+  local default_max="$2"
+
+  # Besoin de jq et du fichier tokens
+  if ! command -v jq &>/dev/null || [ ! -f "$TOKENS_FILE" ]; then
+    echo "$default_max"
+    return
+  fi
+
+  # Extraire l'historique des turns pour cette phase
+  local turns_json
+  turns_json=$(jq -r ".by_phase[\"$phase\"].turns_history // []" "$TOKENS_FILE" 2>/dev/null)
+
+  # Filtrer les 0 (phases tronquées par max_turns, non significatives)
+  local clean_json
+  clean_json=$(echo "$turns_json" | jq '[.[] | select(. > 0)]' 2>/dev/null || echo "[]")
+
+  # Besoin d'au moins 5 échantillons valides pour adapter
+  local count
+  count=$(echo "$clean_json" | jq 'length' 2>/dev/null || echo "0")
+  if [ "$count" -lt 5 ]; then
+    echo "$default_max"
+    return
+  fi
+
+  # Calculer le p75 (75ème percentile) + 30% de marge
+  local adaptive
+  adaptive=$(echo "$clean_json" | jq '
+    sort |
+    ((length - 1) * 0.75 | floor) as $idx |
+    .[$idx] * 1.3 |
+    ceil |
+    if . < 5 then 5 else . end
+  ' 2>/dev/null || echo "$default_max")
+
+  # Ne jamais dépasser le défaut (garde-fou), ne jamais descendre sous 5
+  if [ "$adaptive" -gt "$default_max" ] 2>/dev/null; then
+    echo "$default_max"
+  elif [ "$adaptive" -lt 5 ] 2>/dev/null; then
+    echo "5"
+  else
+    echo "$adaptive"
+  fi
+}
+
 # === FONCTIONS UTILITAIRES ===
+
+# Troncation intelligente : garde le début et la fin d'un output
+# pour ne pas perdre le message d'erreur initial (souvent en tête)
+# Usage: smart_truncate "$output" 3000  → 500 premiers chars + ... + 2500 derniers chars
+smart_truncate() {
+  local text="$1"
+  local max_chars="${2:-3000}"
+  local len=${#text}
+  if [ "$len" -le "$max_chars" ]; then
+    echo "$text"
+    return
+  fi
+  local head_chars=$(( max_chars / 6 ))       # ~500 chars du début
+  local tail_chars=$(( max_chars - head_chars - 20 ))  # le reste de la fin
+  echo "${text:0:$head_chars}
+... (tronqué: ${len} chars, début+fin conservés) ...
+${text: -$tail_chars}"
+}
 
 log() {
   local level="$1" msg="$2"
@@ -98,9 +302,51 @@ log() {
 # Sauvegarde l'état des compteurs (survit à exec et crash)
 save_state() {
   mkdir -p "$(dirname "$STATE_FILE")"
-  cat > "$STATE_FILE" << STATEEOF
-{"feature_count":$FEATURE_COUNT,"epic_feature_count":$EPIC_FEATURE_COUNT,"total_failures":$TOTAL_FAILURES,"evolve_cycles":$EVOLVE_CYCLES,"ai_roadmap_adds":$AI_ROADMAP_ADDS}
+  if command -v jq &> /dev/null; then
+    # Version enrichie avec tracking complet
+    local timeline_json="$FEATURES_TIMELINE"
+    [ -z "$timeline_json" ] && timeline_json="[]"
+    local current_feat_safe
+    current_feat_safe=$(printf '%s' "$CURRENT_FEATURE" | jq -Rs '.' 2>/dev/null || echo '""')
+    local current_phase_safe
+    current_phase_safe=$(printf '%s' "$CURRENT_PHASE" | jq -Rs '.' 2>/dev/null || echo '""')
+    jq -n \
+      --argjson feature_count "$FEATURE_COUNT" \
+      --argjson epic_feature_count "$EPIC_FEATURE_COUNT" \
+      --argjson total_failures "$TOTAL_FAILURES" \
+      --argjson evolve_cycles "$EVOLVE_CYCLES" \
+      --argjson ai_roadmap_adds "$AI_ROADMAP_ADDS" \
+      --argjson current_feature "$current_feat_safe" \
+      --argjson current_phase "$current_phase_safe" \
+      --arg phase_started_at "${PHASE_STARTED_AT:-}" \
+      --arg run_started_at "${RUN_STARTED_AT:-}" \
+      --argjson features_timeline "$timeline_json" \
+      --argjson functional_check_passed "${LAST_FUNCTIONAL_CHECK:-null}" \
+      --arg run_status "${RUN_STATUS:-running}" \
+      --arg run_ended_at "${RUN_ENDED_AT:-}" \
+      --arg workflow_phase "${WORKFLOW_PHASE:-init}" \
+      '{
+        feature_count: $feature_count,
+        epic_feature_count: $epic_feature_count,
+        total_failures: $total_failures,
+        evolve_cycles: $evolve_cycles,
+        ai_roadmap_adds: $ai_roadmap_adds,
+        current_feature: $current_feature,
+        current_phase: $current_phase,
+        phase_started_at: $phase_started_at,
+        run_started_at: $run_started_at,
+        features_timeline: $features_timeline,
+        functional_check_passed: $functional_check_passed,
+        run_status: $run_status,
+        run_ended_at: $run_ended_at,
+        workflow_phase: $workflow_phase
+      }' > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+  else
+    # Fallback sans jq — format simple
+    cat > "$STATE_FILE" << STATEEOF
+{"feature_count":$FEATURE_COUNT,"epic_feature_count":$EPIC_FEATURE_COUNT,"total_failures":$TOTAL_FAILURES,"evolve_cycles":$EVOLVE_CYCLES,"ai_roadmap_adds":$AI_ROADMAP_ADDS,"run_status":"${RUN_STATUS:-running}","run_ended_at":"${RUN_ENDED_AT:-}","workflow_phase":"${WORKFLOW_PHASE:-init}"}
 STATEEOF
+  fi
 }
 
 # Restaure l'état si disponible
@@ -111,7 +357,147 @@ restore_state() {
     TOTAL_FAILURES=$(jq -r '.total_failures // 0' "$STATE_FILE")
     EVOLVE_CYCLES=$(jq -r '.evolve_cycles // 0' "$STATE_FILE")
     AI_ROADMAP_ADDS=$(jq -r '.ai_roadmap_adds // 0' "$STATE_FILE")
-    log INFO "État restauré : features=$FEATURE_COUNT, échecs=$TOTAL_FAILURES, evolve_cycles=$EVOLVE_CYCLES"
+    # Restaurer le tracking enrichi
+    CURRENT_FEATURE=$(jq -r '.current_feature // ""' "$STATE_FILE")
+    CURRENT_PHASE=$(jq -r '.current_phase // ""' "$STATE_FILE")
+    PHASE_STARTED_AT=$(jq -r '.phase_started_at // ""' "$STATE_FILE")
+    local saved_run_started
+    saved_run_started=$(jq -r '.run_started_at // ""' "$STATE_FILE")
+    [ -n "$saved_run_started" ] && RUN_STARTED_AT="$saved_run_started"
+    FEATURES_TIMELINE=$(jq -c '.features_timeline // []' "$STATE_FILE")
+    # Restaurer la state machine
+    local saved_workflow
+    saved_workflow=$(jq -r '.workflow_phase // "init"' "$STATE_FILE")
+    [ -n "$saved_workflow" ] && WORKFLOW_PHASE="$saved_workflow"
+    log INFO "État restauré : features=$FEATURE_COUNT, échecs=$TOTAL_FAILURES, evolve_cycles=$EVOLVE_CYCLES, workflow=$WORKFLOW_PHASE"
+  fi
+}
+
+# Met à jour le tracking de phase courante
+update_phase_tracking() {
+  local phase="$1"
+  local feature="${2:-}"
+  CURRENT_PHASE="$phase"
+  PHASE_STARTED_AT=$(date -Iseconds)
+  [ -n "$feature" ] && CURRENT_FEATURE="$feature"
+}
+
+# Ajoute une entrée à la timeline des features
+timeline_add() {
+  local name="$1" status="$2" fix_attempts="${3:-0}"
+  local ts
+  ts=$(date -Iseconds)
+  if command -v jq &> /dev/null; then
+    FEATURES_TIMELINE=$(echo "$FEATURES_TIMELINE" | jq -c \
+      --arg name "$name" --arg status "$status" --arg ts "$ts" --argjson fix "$fix_attempts" \
+      '. + [{"name": $name, "started": $ts, "status": $status, "fix_attempts": $fix}]')
+  fi
+}
+
+# Met à jour le dernier élément de la timeline
+timeline_update_last() {
+  local status="$1" fix_attempts="${2:-0}"
+  local ts
+  ts=$(date -Iseconds)
+  if command -v jq &> /dev/null; then
+    FEATURES_TIMELINE=$(echo "$FEATURES_TIMELINE" | jq -c \
+      --arg status "$status" --arg ts "$ts" --argjson fix "$fix_attempts" \
+      'if length > 0 then .[-1].ended = $ts | .[-1].status = $status | .[-1].fix_attempts = $fix else . end')
+  fi
+}
+
+# Marque une feature comme cochée dans ROADMAP.md (fiable, sed-based)
+mark_feature_done_bash() {
+  local feature_name="$1"
+  local roadmap="$PROJECT_DIR/.orc/ROADMAP.md"
+  [ -f "$roadmap" ] || return 0
+  # Échappe les caractères spéciaux regex dans le nom de la feature
+  local escaped_name
+  escaped_name=$(printf '%s' "$feature_name" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
+  # Remplacer la première occurrence unchecked contenant ce nom
+  sed -i "0,/^\- \[ \] ${escaped_name}/s/^\- \[ \] \(${escaped_name}\)/- [x] \1/" "$roadmap" 2>/dev/null || true
+  log INFO "Roadmap cochée (bash) : $feature_name"
+}
+
+# Met à jour CHANGELOG.md du projet après chaque feature mergée
+update_changelog() {
+  local feature_name="$1"
+  local fix_attempts="${2:-0}"
+  local changelog="$PROJECT_DIR/CHANGELOG.md"
+  local today
+  today=$(date '+%Y-%m-%d')
+
+  # Créer le fichier si absent
+  if [ ! -f "$changelog" ]; then
+    {
+      echo "# Changelog"
+      echo ""
+      echo "Toutes les modifications notables de ce projet sont documentées ici."
+      echo "Généré automatiquement par [ORC](https://github.com/gregoirelacoste/orc)."
+      echo ""
+    } > "$changelog"
+  fi
+
+  # Ajouter l'entrée (insérée après le header, avant les anciennes entrées)
+  local entry="- **$today** — $feature_name"
+  [ "$fix_attempts" -gt 0 ] && entry="$entry ($fix_attempts fix)"
+
+  # Insérer après la première ligne vide suivant le header
+  local tmp_cl
+  tmp_cl=$(mktemp)
+  awk -v entry="$entry" '
+    /^$/ && !inserted && NR > 1 { print; print entry; inserted=1; next }
+    { print }
+  ' "$changelog" > "$tmp_cl" && mv "$tmp_cl" "$changelog"
+
+  # Commit le changelog avec la feature
+  run_in_project "git add CHANGELOG.md 2>/dev/null && git commit --amend --no-edit 2>/dev/null" || true
+}
+
+# Vérification fonctionnelle post-feature
+run_functional_check() {
+  local feature_name="$1"
+  if [ -z "${FUNCTIONAL_CHECK_COMMAND:-}" ]; then
+    return 0
+  fi
+  log INFO "Vérification fonctionnelle en cours..."
+  local func_output func_exit
+  func_output=$(run_in_project "$FUNCTIONAL_CHECK_COMMAND 2>&1") && func_exit=0 || func_exit=$?
+
+  if [ $func_exit -eq 0 ]; then
+    log INFO "Vérification fonctionnelle OK ✓"
+    LAST_FUNCTIONAL_CHECK=true
+    return 0
+  fi
+
+  log WARN "Vérification fonctionnelle échouée — tentative de correction..."
+  LAST_FUNCTIONAL_CHECK=false
+
+  # Une tentative de fix dédiée
+  run_claude "La vérification fonctionnelle a ÉCHOUÉ après le merge de la feature '$feature_name'.
+
+COMMANDE : $FUNCTIONAL_CHECK_COMMAND
+EXIT CODE : $func_exit
+OUTPUT :
+$(smart_truncate "$func_output" 3000)
+
+RÈGLE ABSOLUE : l'application DOIT être fonctionnelle après chaque feature.
+Corrige le problème pour que l'app démarre/fonctionne correctement.
+Ne casse PAS les tests existants." \
+    20 "$LOG_DIR/feature-$FEATURE_COUNT-functional-check.log" "functional-fix" "$feature_name" || {
+    log WARN "Correction fonctionnelle échouée."
+  }
+
+  # Re-vérifier
+  func_output=$(run_in_project "$FUNCTIONAL_CHECK_COMMAND 2>&1") && func_exit=0 || func_exit=$?
+  if [ $func_exit -eq 0 ]; then
+    log INFO "Vérification fonctionnelle OK après correction ✓"
+    LAST_FUNCTIONAL_CHECK=true
+    # Commiter le fix
+    run_in_project "git add -A && git commit -m 'fix: app fonctionnelle après $feature_name' 2>/dev/null || true"
+  else
+    log ERROR "App non fonctionnelle après '$feature_name' — signalé mais on continue."
+    notify "ALERTE : App non fonctionnelle après '$feature_name'"
   fi
 }
 
@@ -144,6 +530,8 @@ track_tokens() {
   local phase="$1"
   local feature="${2:-}"
   local json_output="$3"
+  local model="${4:-unknown}"
+  local actual_turns="${5:-0}"
 
   if ! command -v jq &> /dev/null; then
     return 0
@@ -189,6 +577,8 @@ track_tokens() {
     --arg phase "$phase" \
     --arg feature "$feature" \
     --arg ts "$timestamp" \
+    --arg model "$model" \
+    --argjson turns "$actual_turns" \
     '
     .total_input_tokens = $total_in |
     .total_output_tokens = $total_out |
@@ -198,6 +588,8 @@ track_tokens() {
     .by_phase[$phase].output_tokens = ((.by_phase[$phase].output_tokens // 0) + $output) |
     .by_phase[$phase].cost_usd = ((.by_phase[$phase].cost_usd // 0) + $cost) |
     .by_phase[$phase].calls = ((.by_phase[$phase].calls // 0) + 1) |
+    .by_phase[$phase].models_used[$model] = ((.by_phase[$phase].models_used[$model] // 0) + 1) |
+    .by_phase[$phase].turns_history = (((.by_phase[$phase].turns_history // []) + [$turns]) | .[-20:]) |
     (if $feature != "" then
       .by_feature[$feature].input_tokens = ((.by_feature[$feature].input_tokens // 0) + $input) |
       .by_feature[$feature].output_tokens = ((.by_feature[$feature].output_tokens // 0) + $output) |
@@ -207,6 +599,8 @@ track_tokens() {
       "timestamp": $ts,
       "phase": $phase,
       "feature": $feature,
+      "model": $model,
+      "turns": $turns,
       "input_tokens": $input,
       "output_tokens": $output,
       "cost_usd": $cost
@@ -250,59 +644,100 @@ print_cost_summary() {
 }
 
 # Run Claude avec tracking de tokens et logs temps réel
+# Args: prompt, max_turns, log_file, phase_name, feature_name, [system_prompt]
 run_claude() {
   local prompt="$1"
   local max_turns="${2:-$MAX_TURNS_PER_INVOCATION}"
   local log_file="${3:-/dev/null}"
   local phase_name="${4:-unknown}"
   local feature_name="${5:-}"
+  local custom_system_prompt="${6:-}"
 
   local exit_code=0
-  TMP_JSON=$(mktemp)
   local start_time
   start_time=$(date +%s)
+
+  # Apprentissage adaptatif : ajuster max_turns selon l'historique réel
+  local adapted
+  adapted=$(adaptive_max_turns "$phase_name" "$max_turns")
+  if [ "$adapted" != "$max_turns" ]; then
+    log INFO "  Turns adaptatifs: $max_turns → $adapted [phase=$phase_name] (basé sur l'historique)"
+    max_turns="$adapted"
+  fi
 
   log INFO "→ Claude lancé [phase=$phase_name] [max_turns=$max_turns]..."
 
   # Préfixe : forcer Claude à rester dans le répertoire projet
   # + contexte adaptatif : indiquer quels fichiers de connaissance consulter selon la phase
+  # Pré-lire les fichiers de contexte côté bash pour les injecter directement
+  # (évite les tool calls de lecture qui coûtent ~100 tokens d'overhead chacune)
+  local index_content="" automap_content=""
+  if [ -f "$PROJECT_DIR/.orc/codebase/INDEX.md" ]; then
+    # Tronquer à 60 lignes max (convention = 40 lignes, marge de sécurité)
+    index_content=$(head -60 "$PROJECT_DIR/.orc/codebase/INDEX.md" 2>/dev/null || true)
+  fi
+  if [ -f "$PROJECT_DIR/.orc/codebase/auto-map.md" ]; then
+    automap_content=$(cat "$PROJECT_DIR/.orc/codebase/auto-map.md" 2>/dev/null || true)
+  fi
+
   local context_hint=""
   case "$phase_name" in
+    plan)
+      context_hint="
+CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+EXPORTS ET CLASSES (auto-map.md) :
+${automap_content:-[pas encore généré]}"
+      ;;
     implement)
       context_hint="
-CONTEXTE PROJET — Lis dans cet ordre :
-1. codebase/INDEX.md (carte sémantique — TOUJOURS lire en premier)
-2. codebase/auto-map.md (carte auto-générée des exports — vérité du code)
-3. Les fichiers de détail codebase/*.md pertinents pour cette feature (PAS tous)
-4. .claude/skills/stack-conventions.md (conventions à respecter)"
+CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+EXPORTS ET CLASSES (auto-map.md) :
+${automap_content:-[pas encore généré]}
+
+Lis aussi si pertinent pour cette feature :
+- Les fichiers de détail .orc/codebase/*.md (PAS tous — uniquement ceux pertinents)
+- .claude/skills/stack-conventions.md (conventions à respecter)"
       ;;
     fix)
       context_hint="
-CONTEXTE PROJET — Lis si pertinent :
-1. codebase/auto-map.md (pour localiser les modules impliqués)
-2. codebase/security.md (si l'erreur est liée à la sécurité)
-3. .claude/skills/fix-tests.md (workflow de correction)"
+EXPORTS ET CLASSES (auto-map.md — pour localiser les modules) :
+${automap_content:-[pas encore généré]}
+
+Lis aussi si pertinent :
+- .orc/codebase/security.md (si l'erreur est liée à la sécurité)
+- .claude/skills/fix-tests.md (workflow de correction)"
       ;;
     strategy)
       context_hint="
-CONTEXTE PROJET — Lis dans cet ordre :
-1. codebase/INDEX.md (état actuel du projet)
-2. codebase/architecture.md (décisions techniques en place)
-3. research/INDEX.md (insights marché)"
+CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+Lis aussi :
+- .orc/codebase/architecture.md (décisions techniques en place)
+- .orc/research/INDEX.md (insights marché)"
       ;;
     reflect)
       context_hint="
-CONTEXTE PROJET — Mets à jour :
-1. codebase/auto-map.md est déjà à jour (auto-généré) — lis-le pour vérifier
-2. codebase/INDEX.md + les fichiers de détail impactés par cette feature
-3. .claude/skills/stack-conventions.md si nouveaux patterns"
+EXPORTS ET CLASSES (auto-map.md — vérité du code, auto-généré) :
+${automap_content:-[pas encore généré]}
+
+Mets à jour :
+- .orc/codebase/INDEX.md + les fichiers de détail impactés par cette feature
+- .claude/skills/stack-conventions.md si nouveaux patterns"
       ;;
     meta-retro)
       context_hint="
-CONTEXTE PROJET — Auditer :
-1. codebase/INDEX.md — est-il à jour vs auto-map.md ?
-2. codebase/auto-map.md — vérité du code actuel
-3. Tous les fichiers codebase/*.md — vérifier la cohérence avec le code réel"
+CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+EXPORTS ET CLASSES (auto-map.md) :
+${automap_content:-[pas encore généré]}
+
+Auditer : tous les fichiers .orc/codebase/*.md — vérifier la cohérence avec le code réel"
       ;;
   esac
 
@@ -311,22 +746,61 @@ ${context_hint}
 
 $prompt"
 
-  # Lancer Claude en background avec output stream-JSON (JSONL)
-  # stream-json produit des événements au fil de l'eau → le watchdog
-  # peut détecter les vrais stalls (contrairement à json qui bufferise tout)
+  # Résoudre le modèle selon la phase (principal ou léger)
+  local effective_model
+  effective_model=$(resolve_model "$phase_name")
   local model_flag=""
-  if [ -n "${CLAUDE_MODEL:-}" ]; then
-    model_flag="--model $CLAUDE_MODEL"
+  if [ -n "$effective_model" ]; then
+    model_flag="--model $effective_model"
+    log INFO "  Modèle: $effective_model [phase=$phase_name]"
   fi
 
-  # shellcheck disable=SC2086
-  claude -p "$full_prompt" \
-    --dangerously-skip-permissions \
-    --max-turns "$max_turns" \
-    --output-format stream-json \
-    --verbose \
-    $model_flag \
-    -d "$PROJECT_DIR" > "$TMP_JSON" 2>&1 &
+  # Résoudre le pricing pour le tracking
+  get_model_pricing "$effective_model"
+
+  # Budget prédictif : estimer le coût AVANT de lancer (et avant mktemp)
+  if [ -n "${MAX_BUDGET_USD:-}" ]; then
+    # Estimation conservatrice : ~4000 tokens input + ~2000 output par turn
+    local est_input=$(( max_turns * 4000 ))
+    local est_output=$(( max_turns * 2000 ))
+    local est_cost
+    est_cost=$(awk "BEGIN {printf \"%.2f\", $est_input * $COST_PER_INPUT_TOKEN + $est_output * $COST_PER_OUTPUT_TOKEN}")
+    local remaining
+    remaining=$(awk "BEGIN {printf \"%.2f\", $MAX_BUDGET_USD - $TOTAL_COST_USD}")
+    local would_exceed
+    would_exceed=$(awk "BEGIN {print ($TOTAL_COST_USD + $est_cost > $MAX_BUDGET_USD) ? \"yes\" : \"no\"}")
+    if [ "$would_exceed" = "yes" ]; then
+      log WARN "Budget prédictif : ~\$${est_cost} estimé, \$${remaining} restant — skip phase '$phase_name'"
+      log ERROR "Budget insuffisant — arrêt propre du run."
+      print_cost_summary
+      workflow_transition "budget_exceeded"
+      RUN_STATUS="budget_exceeded"
+      RUN_ENDED_AT=$(date -Iseconds)
+      save_state
+      exit 0
+    fi
+  fi
+
+  TMP_JSON=$(mktemp)
+
+  # Construire les arguments Claude dans un array (évite la duplication)
+  local -a claude_args=(
+    -p "$full_prompt"
+    --dangerously-skip-permissions
+    --max-turns "$max_turns"
+    --output-format stream-json
+    --verbose
+  )
+  if [ -n "$effective_model" ]; then
+    claude_args+=(--model "$effective_model")
+  fi
+  # Multi-agent : append le system prompt (ne remplace PAS le défaut + CLAUDE.md)
+  if [ -n "$custom_system_prompt" ]; then
+    claude_args+=(--append-system-prompt "$custom_system_prompt")
+  fi
+  claude_args+=(-d "$PROJECT_DIR")
+
+  claude "${claude_args[@]}" > "$TMP_JSON" 2>&1 &
 
   CLAUDE_PID=$!
 
@@ -334,7 +808,12 @@ $prompt"
   local dots=0
   local last_size=0
   local stall_count=0
+  # Timeout par phase (PHASE_TIMEOUTS) ou global (CLAUDE_TIMEOUT)
   local timeout="${CLAUDE_TIMEOUT:-0}"
+  if declare -p PHASE_TIMEOUTS &>/dev/null && [ -n "${PHASE_TIMEOUTS[$phase_name]+x}" ]; then
+    timeout="${PHASE_TIMEOUTS[$phase_name]}"
+    log INFO "  Timeout: ${timeout}s [phase=$phase_name]"
+  fi
 
   while kill -0 "$CLAUDE_PID" 2>/dev/null; do
     dots=$((dots + 1))
@@ -361,6 +840,18 @@ $prompt"
     # Si bloqué depuis 2 minutes (24 x 5s), log un warning
     if [ "$stall_count" -eq 24 ]; then
       log WARN "Claude semble bloqué (pas de nouvelles données depuis 2min) [phase=$phase_name]"
+    fi
+
+    # Kill auto si stall prolongé (STALL_KILL_THRESHOLD × 5s)
+    local stall_kill_threshold="${STALL_KILL_THRESHOLD:-0}"
+    if [ "$stall_kill_threshold" -gt 0 ] && [ "$stall_count" -ge "$stall_kill_threshold" ]; then
+      local stall_mins=$(( stall_count * 5 / 60 ))
+      log ERROR "Claude bloqué depuis ${stall_mins}min — kill auto [phase=$phase_name]"
+      kill "$CLAUDE_PID" 2>/dev/null || true
+      wait "$CLAUDE_PID" 2>/dev/null || true
+      exit_code=124
+      CLAUDE_PID=""
+      break
     fi
 
     # Timeout global : kill si dépassé
@@ -414,7 +905,32 @@ $prompt"
     fi
   fi
 
-  track_tokens "$phase_name" "$feature_name" "$json_output"
+  # Détecter error_max_turns — la phase a été tronquée par le max_turns
+  local result_subtype=""
+  if command -v jq &> /dev/null; then
+    result_subtype=$(echo "$json_output" | jq -r '.subtype // ""' 2>/dev/null || true)
+    if [ "$result_subtype" = "error_max_turns" ]; then
+      log WARN "Claude a atteint la limite de turns ($max_turns) en phase '$phase_name' — résultat potentiellement incomplet."
+    fi
+  fi
+
+  # Compter les turns réellement utilisés (nombre de messages assistant dans le stream)
+  local actual_turns=0
+  actual_turns=$(grep -c '"role":"assistant"' "$TMP_JSON" 2>/dev/null || echo "0")
+  # Fallback : essayer l'autre format si 0
+  if [ "$actual_turns" -eq 0 ]; then
+    actual_turns=$(grep -c '"type":"assistant"' "$TMP_JSON" 2>/dev/null || echo "0")
+  fi
+
+  # Ne PAS enregistrer les turns si la phase a été tronquée par max_turns
+  # (sinon feedback loop négatif : moins de turns → historique bas → encore moins de turns)
+  local turns_to_record="$actual_turns"
+  if [ "$result_subtype" = "error_max_turns" ]; then
+    turns_to_record=0
+    log WARN "Turns non enregistrés (tronqués par max_turns=$max_turns)"
+  fi
+
+  track_tokens "$phase_name" "$feature_name" "$json_output" "$effective_model" "$turns_to_record"
 
   if [ -n "${MAX_BUDGET_USD:-}" ]; then
     local over_budget
@@ -424,7 +940,11 @@ $prompt"
       print_cost_summary
       rm -f "$TMP_JSON"
       TMP_JSON=""
-      exit 1
+      workflow_transition "budget_exceeded"
+      RUN_STATUS="budget_exceeded"
+      RUN_ENDED_AT=$(date -Iseconds)
+      save_state
+      exit 0
     fi
   fi
 
@@ -485,7 +1005,7 @@ FIXEOF
 
 # Lit la prochaine feature non cochée de la ROADMAP
 next_feature() {
-  grep -m1 '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null | sed 's/^- \[ \] //' || true
+  grep -m1 '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null | sed 's/^- \[ \] //' || true
 }
 
 # Nom court pour les branches git (avec fallback si vide)
@@ -500,7 +1020,7 @@ branch_name() {
 
 # Exécute une commande dans PROJECT_DIR sans changer le pwd global
 run_in_project() {
-  ( cd "$PROJECT_DIR" && eval "$@" )
+  ( set +e; cd "$PROJECT_DIR" && eval "$@" )
 }
 
 # === NOTIFICATIONS ===
@@ -545,9 +1065,20 @@ check_signals() {
     rm -f "$signal_dir/stop-after-feature"
     log INFO "Signal stop-after-feature détecté — arrêt propre après cette feature."
     notify "Arrêt propre demandé — finit la feature en cours."
+    workflow_transition "stopped"
+    RUN_STATUS="stopped"
+    RUN_ENDED_AT=$(date -Iseconds)
     save_state
     print_cost_summary
     exit 0
+  fi
+
+  # Signal : skip la feature en cours
+  if [ -f "$signal_dir/skip-feature" ]; then
+    rm -f "$signal_dir/skip-feature"
+    log WARN "Signal skip-feature détecté — abandon de la feature en cours."
+    notify "Feature '${CURRENT_FEATURE:-inconnue}' skippée par signal humain."
+    SKIP_CURRENT_FEATURE=true
   fi
 }
 
@@ -574,8 +1105,10 @@ gh_pr_mode() {
 # Récupère le owner/repo depuis le remote git
 gh_repo_slug() {
   local remote="${GITHUB_REMOTE:-origin}"
-  run_in_project "git remote get-url '$remote' 2>/dev/null" \
-    | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##'
+  local url
+  url=$(run_in_project "git remote get-url '$remote' 2>/dev/null" || true)
+  [ -z "$url" ] && return 1
+  echo "$url" | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##'
 }
 
 # Crée l'issue de tracking pour un run orchestrateur
@@ -585,11 +1118,7 @@ gh_create_tracking_issue() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
-  if [ -z "$repo_slug" ]; then
-    log WARN "GitHub: impossible de déterminer le repo — tracking issue non créée."
-    return 1
-  fi
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
   local body
   body="## 🔄 ORC Orchestrator Run
@@ -618,7 +1147,11 @@ _Labels \`orc:pause\`, \`orc:stop\`, \`orc:continue\` peuvent être utilisés co
     }
   }
 
-  TRACKING_ISSUE_NUMBER=$(echo "$issue_url" | grep -oE '[0-9]+$')
+  TRACKING_ISSUE_NUMBER=$(echo "$issue_url" | grep -oE '[0-9]+$' || true)
+  if [ -z "$TRACKING_ISSUE_NUMBER" ]; then
+    log WARN "GitHub: impossible d'extraire le numéro d'issue depuis '$issue_url'."
+    return 1
+  fi
   log INFO "GitHub: tracking issue créée → $issue_url"
 
   # Persister le numéro de l'issue dans .orc/
@@ -641,7 +1174,7 @@ gh_comment() {
 
   local message="$1"
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
   gh issue comment "$TRACKING_ISSUE_NUMBER" \
     --repo "$repo_slug" \
@@ -657,7 +1190,7 @@ gh_create_pr() {
   if ! gh_pr_mode; then return 1; fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
   local remote="${GITHUB_REMOTE:-origin}"
 
   # Push la branche
@@ -704,11 +1237,15 @@ gh_merge_pr() {
   if ! gh_pr_mode; then return 1; fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
   # Extraire le numéro de PR
   local pr_number
-  pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$')
+  pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || true)
+  if [ -z "$pr_number" ]; then
+    log WARN "GitHub: impossible d'extraire le numéro de PR depuis '$pr_url'."
+    return 1
+  fi
 
   if [ "$REQUIRE_HUMAN_APPROVAL" = true ]; then
     log INFO "En attente d'approbation pour PR #$pr_number..."
@@ -822,7 +1359,7 @@ gh_check_signals() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
   local labels
   labels=$(gh issue view "$TRACKING_ISSUE_NUMBER" \
@@ -869,7 +1406,7 @@ gh_create_abandoned_issue() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
   local body="## Feature abandonnée : $feature_name
 
@@ -877,7 +1414,7 @@ gh_create_abandoned_issue() {
 **Feature #** : $FEATURE_COUNT"
 
   # Ajouter les réflexions si disponibles
-  local reflections="$PROJECT_DIR/logs/fix-reflections-$FEATURE_COUNT.md"
+  local reflections="$PROJECT_DIR/.orc/logs/fix-reflections-$FEATURE_COUNT.md"
   if [ -f "$reflections" ]; then
     body="$body
 
@@ -907,7 +1444,7 @@ gh_close_tracking_issue() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
   gh_comment "## 🏁 Run terminé
 
@@ -934,10 +1471,9 @@ gh_sync_roadmap() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
-  if [ -z "$repo_slug" ]; then return 1; fi
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
-  local roadmap="$PROJECT_DIR/ROADMAP.md"
+  local roadmap="$PROJECT_DIR/.orc/ROADMAP.md"
   if [ ! -f "$roadmap" ]; then return 0; fi
 
   # Fichier de mapping local : feature_name → issue_number
@@ -971,7 +1507,8 @@ _Miroir automatique de ROADMAP.md — ne pas modifier cette issue._" \
     }
 
     local issue_num
-    issue_num=$(echo "$issue_url" | grep -oE '[0-9]+$')
+    issue_num=$(echo "$issue_url" | grep -oE '[0-9]+$' || true)
+    [ -z "$issue_num" ] && continue
     echo "$feature_name	$issue_num" >> "$map_file"
     log INFO "GitHub: issue #$issue_num créée pour '$feature_name'"
   done < <(grep '^\- \[ \]' "$roadmap" 2>/dev/null || true)
@@ -984,7 +1521,7 @@ _Miroir automatique de ROADMAP.md — ne pas modifier cette issue._" \
 
     # Trouver l'issue mappée
     local issue_num
-    issue_num=$(grep -F "$feature_name" "$map_file" 2>/dev/null | tail -1 | cut -f2)
+    issue_num=$(grep -F "$feature_name" "$map_file" 2>/dev/null | tail -1 | cut -f2 || true)
     [ -z "$issue_num" ] && continue
 
     # Fermer si pas déjà fermée
@@ -1010,8 +1547,7 @@ gh_sync_milestone() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
-  if [ -z "$repo_slug" ]; then return 1; fi
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
   # Vérifier si le milestone existe déjà
   local existing
@@ -1046,7 +1582,7 @@ gh_read_feedback() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
 
   # Lire les commentaires récents (depuis le dernier check)
   local last_check_file="$SCRIPT_DIR/.orc/gh-feedback-last-check"
@@ -1098,7 +1634,7 @@ gh_wait_ci() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
   local remote="${GITHUB_REMOTE:-origin}"
 
   # S'assurer que la branche est poussée
@@ -1136,7 +1672,7 @@ gh_post_quality_status() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
   local sha
   sha=$(run_in_project "git rev-parse HEAD 2>/dev/null" || echo "")
   [ -z "$sha" ] && return 0
@@ -1158,7 +1694,7 @@ gh_create_release() {
   fi
 
   local repo_slug
-  repo_slug=$(gh_repo_slug)
+  repo_slug=$(gh_repo_slug) || { log WARN "GitHub: remote introuvable — opération ignorée."; return 0; }
   local remote="${GITHUB_REMOTE:-origin}"
 
   # S'assurer que main est poussé
@@ -1213,7 +1749,16 @@ LAST_ERROR_HASH=""
 # Compare l'erreur courante avec la précédente pour détecter les boucles
 error_hash() {
   local output="$1"
-  echo "$output" | head -20 | md5sum | cut -d' ' -f1
+  # Extraire les lignes d'erreur, supprimer les numéros de ligne/timestamps
+  # pour comparer la structure de l'erreur, pas sa position exacte
+  local filtered
+  filtered=$(echo "$output" | grep -iE 'error|fail|exception|TypeError|SyntaxError|cannot find|not found|unexpected' | \
+    sed 's/[0-9]\+//g' | sort -u | head -10)
+  # Fallback sur head -20 si aucune ligne d'erreur trouvée
+  if [ -z "$filtered" ]; then
+    filtered=$(echo "$output" | head -20)
+  fi
+  echo "$filtered" | md5sum | cut -d' ' -f1
 }
 
 # === QUALITY GATE ===
@@ -1240,13 +1785,13 @@ run_quality_gate() {
 # === AUTO REPO MAP ===
 # Génère automatiquement une carte des symboles du projet.
 # Inspiré du "repo map" d'Aider (tree-sitter), version bash/grep.
-# Résultat : codebase/auto-map.md — vérité du code, pas maintenu par l'IA.
+# Résultat : .orc/codebase/auto-map.md — vérité du code, pas maintenu par l'IA.
 
 generate_repo_map() {
   local project_dir="$1"
-  local map_file="$project_dir/codebase/auto-map.md"
+  local map_file="$project_dir/.orc/codebase/auto-map.md"
 
-  mkdir -p "$project_dir/codebase"
+  mkdir -p "$project_dir/.orc/codebase"
 
   {
     echo "# Auto-generated Repo Map"
@@ -1418,7 +1963,7 @@ human_pause() {
     case "$choice" in
       "") continue ;;
       c|C) return 0 ;;
-      r|R) cat "$PROJECT_DIR/ROADMAP.md" 2>/dev/null || echo "Pas de ROADMAP." ; echo "" ;;
+      r|R) cat "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null || echo "Pas de ROADMAP." ; echo "" ;;
       l|L) tail -30 "$LOG_DIR/orchestrator.log" 2>/dev/null ; echo "" ;;
       t|T) print_cost_summary ;;
       d|D)
@@ -1461,8 +2006,8 @@ human_pause() {
 "
         done
         if [ -n "$feedback" ]; then
-          local feedback_file="$PROJECT_DIR/logs/human-feedback-$FEATURE_COUNT.md"
-          mkdir -p "$PROJECT_DIR/logs"
+          local feedback_file="$PROJECT_DIR/.orc/logs/human-feedback-$FEATURE_COUNT.md"
+          mkdir -p "$PROJECT_DIR/.orc/logs"
           cat > "$feedback_file" << FBEOF
 # Feedback humain — Feature #$FEATURE_COUNT
 Date : $(date '+%Y-%m-%d %H:%M:%S')
@@ -1500,7 +2045,7 @@ FBEOF
         fi
         echo ""
         ;;
-      q|Q) log INFO "Arrêt demandé par l'utilisateur." ; print_cost_summary ; exit 0 ;;
+      q|Q) log INFO "Arrêt demandé par l'utilisateur." ; workflow_transition "stopped" ; RUN_STATUS="stopped" ; RUN_ENDED_AT=$(date -Iseconds) ; print_cost_summary ; exit 0 ;;
       *) echo "Choix invalide." ;;
     esac
   done
@@ -1550,6 +2095,74 @@ init_tokens
 restore_state
 gh_restore_tracking_issue
 
+# === MIGRATION CONFIG AUTO ===
+# Détecte les paramètres manquants dans la config du projet et les ajoute
+# avec les valeurs par défaut. Permet aux projets existants de bénéficier
+# des nouvelles options sans intervention humaine.
+migrate_config() {
+  # Résoudre la config projet (supporte .orc/config.sh et config.sh rétrocompat)
+  local project_config="$SCRIPT_DIR/.orc/config.sh"
+  [ -f "$project_config" ] || project_config="$SCRIPT_DIR/config.sh"
+  [ -f "$project_config" ] || return 0
+
+  # Vérifier que la config est writable
+  [ -w "$project_config" ] || { log WARN "Config non writable ($project_config) — migration ignorée."; return 0; }
+
+  # Résoudre le chemin du template orc (via le symlink orchestrator.sh)
+  local orc_dir
+  orc_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || realpath "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
+  local default_config="$orc_dir/config.default.sh"
+  [ -f "$default_config" ] || return 0
+
+  local migrated=0
+
+  # Extraire les paramètres définis dans config.default.sh (VAR=value, pas les commentaires ni declare)
+  while IFS= read -r line; do
+    # Ignorer les lignes vides, commentaires, declare, et sections
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^declare ]] && continue
+    [[ "$line" =~ ^\) ]] && continue
+
+    # Extraire le nom de la variable
+    local var_name="${line%%=*}"
+    var_name="${var_name#"${var_name%%[![:space:]]*}"}"  # trim leading spaces
+    [[ "$var_name" =~ ^[A-Z_][A-Z_0-9]*$ ]] || continue
+
+    # Vérifier si le paramètre existe dans la config du projet
+    if ! grep -q "^${var_name}=" "$project_config" 2>/dev/null; then
+      echo "# [migré auto]" >> "$project_config"
+      echo "$line" >> "$project_config"
+      migrated=$((migrated + 1))
+      log INFO "Config migrée : $var_name"
+    fi
+  done < "$default_config"
+
+  # Migrer PHASE_TIMEOUTS (declare -A, traitement spécial)
+  if ! grep -q "PHASE_TIMEOUTS" "$project_config" 2>/dev/null; then
+    if grep -q "declare -A PHASE_TIMEOUTS" "$default_config" 2>/dev/null; then
+      echo "# [migré auto] Timeouts par phase" >> "$project_config"
+      sed -n '/^declare -A PHASE_TIMEOUTS/,/^)/p' "$default_config" >> "$project_config"
+      migrated=$((migrated + 1))
+      log INFO "Config migrée : PHASE_TIMEOUTS"
+    fi
+  fi
+
+  if [ "$migrated" -gt 0 ]; then
+    log INFO "Migration config : $migrated paramètres ajoutés."
+  fi
+}
+migrate_config
+
+# Re-source la config au top-level après migration (declare -A PHASE_TIMEOUTS
+# crée un array local si sourcé dans une fonction — le re-source ici le rend global)
+if [ -f "$SCRIPT_DIR/.orc/config.sh" ]; then
+  source "$SCRIPT_DIR/.orc/config.sh"
+elif [ -f "$SCRIPT_DIR/config.sh" ]; then
+  source "$SCRIPT_DIR/config.sh"
+fi
+
+clear_action_required
 log PHASE "DÉMARRAGE DE L'AGENT AUTONOME"
 log INFO "Config : MAX_FEATURES=$MAX_FEATURES | MAX_FIX=$MAX_FIX_ATTEMPTS | EPIC_SIZE=$EPIC_SIZE"
 log INFO "Recherche : $ENABLE_RESEARCH | Approbation humaine : $REQUIRE_HUMAN_APPROVAL"
@@ -1566,6 +2179,7 @@ fi
 # ============================================================
 
 if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
+  workflow_transition "bootstrap"
   log PHASE "PHASE 0 — BOOTSTRAP"
 
   if [ ! -d "$PROJECT_DIR/.git" ]; then
@@ -1573,15 +2187,17 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
     run_in_project "git init -b main > /dev/null 2>&1"
   fi
 
-  if [ ! -f "$PROJECT_DIR/BRIEF.md" ]; then
-    cp "$SCRIPT_DIR/BRIEF.md" "$PROJECT_DIR/BRIEF.md"
+  mkdir -p "$PROJECT_DIR/.orc"
+
+  if [ ! -f "$PROJECT_DIR/.orc/BRIEF.md" ]; then
+    cp "$SCRIPT_DIR/BRIEF.md" "$PROJECT_DIR/.orc/BRIEF.md"
   fi
 
-  mkdir -p "$PROJECT_DIR/research/competitors" \
-           "$PROJECT_DIR/research/trends" \
-           "$PROJECT_DIR/research/user-needs" \
-           "$PROJECT_DIR/research/regulations" \
-           "$PROJECT_DIR/logs"
+  mkdir -p "$PROJECT_DIR/.orc/research/competitors" \
+           "$PROJECT_DIR/.orc/research/trends" \
+           "$PROJECT_DIR/.orc/research/user-needs" \
+           "$PROJECT_DIR/.orc/research/regulations" \
+           "$PROJECT_DIR/.orc/logs"
 
   # Copier les learnings inter-projets si disponibles
   if compgen -G "$SCRIPT_DIR/learnings/*.md" > /dev/null 2>&1; then
@@ -1602,6 +2218,24 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
   fi
 
   local_prompt=$(render_phase "00-bootstrap.md")
+
+  # Injecter les learnings inter-projets directement dans le prompt
+  # (au lieu de compter sur Claude pour les lire via tool call)
+  if [ -d "$PROJECT_DIR/learnings" ] && compgen -G "$PROJECT_DIR/learnings/*.md" > /dev/null 2>&1; then
+    local learnings_content=""
+    for lf in "$PROJECT_DIR/learnings/"*.md; do
+      learnings_content="$learnings_content
+--- $(basename "$lf") ---
+$(head -50 "$lf")
+"
+    done
+    local_prompt="$local_prompt
+
+LEARNINGS DES PROJETS PRÉCÉDENTS (intègre les règles pertinentes dans CLAUDE.md) :
+$learnings_content"
+    log INFO "Learnings inter-projets injectés dans le prompt bootstrap."
+  fi
+
   run_claude "$local_prompt" 60 "$LOG_DIR/00-bootstrap.log" "bootstrap"
 
   # Créer la tracking issue GitHub si configuré
@@ -1618,7 +2252,8 @@ fi
 # PHASE 1 — RECHERCHE INITIALE
 # ============================================================
 
-if [ "$ENABLE_RESEARCH" = true ] && [ ! -f "$PROJECT_DIR/research/INDEX.md" ]; then
+if [ "$ENABLE_RESEARCH" = true ] && [ ! -f "$PROJECT_DIR/.orc/research/INDEX.md" ]; then
+  workflow_transition "research"
   log PHASE "PHASE 1 — RECHERCHE INITIALE"
 
   local_prompt=$(render_phase "01-research.md")
@@ -1631,7 +2266,8 @@ fi
 # PHASE 2 — STRATÉGIE
 # ============================================================
 
-if ! grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
+if ! grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
+  workflow_transition "strategy"
   log PHASE "PHASE 2 — STRATÉGIE"
 
   local_prompt=$(render_phase "02-strategy.md")
@@ -1642,8 +2278,13 @@ if ! grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
 fi
 
 # ============================================================
-# PHASE 3 — BOUCLE PRINCIPALE
+# PHASE 3 — BOUCLE PRINCIPALE (avec cycles evolve intégrés)
 # ============================================================
+
+# Boucle englobante : feature loop + evolve, sans exec "$0" restart
+workflow_transition "features"
+MAIN_LOOP_CONTINUE=true
+while [ "$MAIN_LOOP_CONTINUE" = true ]; do
 
 log PHASE "PHASE 3 — BOUCLE DE DÉVELOPPEMENT"
 
@@ -1661,13 +2302,25 @@ while [ $FEATURE_COUNT -lt $MAX_FEATURES ]; do
 
   FEATURE_COUNT=$((FEATURE_COUNT + 1))
   EPIC_FEATURE_COUNT=$((EPIC_FEATURE_COUNT + 1))
+  update_phase_tracking "implement" "$feature_name"
+  timeline_add "$feature_name" "in_progress" 0
   save_state
 
   log PHASE "FEATURE #$FEATURE_COUNT : $feature_name"
   gh_comment "🚀 **Feature #$FEATURE_COUNT** : $feature_name — démarrage"
 
   # --- Vérifier les signaux humains ---
+  SKIP_CURRENT_FEATURE=false
   check_signals
+
+  # Skip demandé par signal humain → passer à la feature suivante
+  if [ "$SKIP_CURRENT_FEATURE" = true ]; then
+    log WARN "Feature '$feature_name' skippée par signal humain."
+    timeline_update_last "skipped" 0
+    mark_feature_done_bash "$feature_name"  # Cocher pour ne pas la reprendre
+    run_in_project "git checkout main 2>/dev/null || true"
+    continue
+  fi
 
   # --- S'assurer qu'on est sur main avant de commencer ---
   run_in_project "git checkout main 2>/dev/null || true"
@@ -1681,7 +2334,7 @@ VEILLE CIBLÉE avant la feature : $feature_name
 1. Comment les concurrents gèrent cette fonctionnalité ? (WebSearch + WebFetch)
 2. Best practices UX pour ce type de feature
 3. APIs ou données publiques exploitables
-4. Mets à jour research/ et ajuste les specs dans ROADMAP.md si nécessaire
+4. Mets à jour .orc/research/ et ajuste les specs dans .orc/ROADMAP.md si nécessaire
 EOF
     )" "$MAX_TURNS_RESEARCH_EPIC" "$LOG_DIR/research-epic-$FEATURE_COUNT.log" "research-epic" "$feature_name" || {
       log WARN "Veille ciblée échouée ou timeout — on continue sans."
@@ -1691,11 +2344,35 @@ EOF
   # --- Auto repo map (avant chaque feature) ---
   generate_repo_map "$PROJECT_DIR"
 
+  # --- Planification rapide (modèle léger, avant implement) ---
+  update_phase_tracking "plan" "$feature_name"
+  log INFO "Planification en cours..."
+  plan_prompt=$(render_phase "03a-plan.md" \
+    "FEATURE_NAME=$feature_name" \
+    "N=$FEATURE_COUNT")
+  run_claude "$plan_prompt" 5 "$LOG_DIR/feature-$FEATURE_COUNT-plan.log" "plan" "$feature_name" || {
+    log WARN "Planification échouée — on continue sans plan."
+  }
+
+  # Injecter le plan dans le prompt d'implémentation s'il existe
+  local plan_file="$PROJECT_DIR/.orc/logs/plan-$FEATURE_COUNT.md"
+
   # --- Implémentation (avec human notes + feedback + contexte adaptatif) ---
   log INFO "Implémentation en cours..."
   impl_prompt=$(render_phase "03-implement.md" \
     "FEATURE_NAME=$feature_name" \
     "FEATURE_BRANCH=$feature_branch")
+
+  # Injecter le plan s'il a été produit
+  if [ -f "$plan_file" ]; then
+    impl_prompt="$impl_prompt
+
+PLAN VALIDÉ POUR CETTE FEATURE (suis-le, ne réinvente pas l'approche) :
+$(head -30 "$plan_file")"
+    log INFO "Plan injecté dans le prompt d'implémentation."
+  else
+    log WARN "Plan non trouvé ($plan_file) — implémentation sans plan."
+  fi
 
   # Injecter les notes humaines mid-run si présentes
   human_notes=$(read_human_notes)
@@ -1714,7 +2391,7 @@ $gh_feedback"
   fi
 
   # Injecter le feedback humain de la feature précédente si présent
-  prev_feedback="$PROJECT_DIR/logs/human-feedback-$((FEATURE_COUNT - 1)).md"
+  prev_feedback="$PROJECT_DIR/.orc/logs/human-feedback-$((FEATURE_COUNT - 1)).md"
   if [ -f "$prev_feedback" ]; then
     impl_prompt="$impl_prompt
 
@@ -1725,7 +2402,39 @@ $(cat "$prev_feedback")"
 
   run_claude "$impl_prompt" "$MAX_TURNS_PER_INVOCATION" "$LOG_DIR/feature-$FEATURE_COUNT-impl.log" "implement" "$feature_name"
 
+  # --- Lint (rapide, avant les tests) ---
+  if [ -n "${LINT_COMMAND:-}" ]; then
+    log INFO "Lint en cours..."
+    LINT_OUTPUT=$(run_in_project "$LINT_COMMAND 2>&1") && LINT_EXIT=0 || LINT_EXIT=$?
+    if [ $LINT_EXIT -ne 0 ]; then
+      log WARN "Lint échoué — correction rapide avant les tests..."
+      run_claude "Le lint a échoué après l'implémentation de la feature '$feature_name'.
+
+COMMANDE : $LINT_COMMAND
+EXIT CODE : $LINT_EXIT
+OUTPUT :
+$(smart_truncate "$LINT_OUTPUT" 2000)
+
+Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/style." \
+        10 "$LOG_DIR/feature-$FEATURE_COUNT-lint.log" "fix" "$feature_name" || true
+    else
+      log INFO "Lint OK."
+    fi
+  fi
+
+  # --- Review adversariale (multi-agent : persona destructif, distinct du coder) ---
+  update_phase_tracking "critic" "$feature_name"
+  log INFO "Review adversariale en cours..."
+  critic_prompt=$(render_phase "03b-critic.md" "FEATURE_NAME=$feature_name")
+  # System prompt adversarial : persona distinct du coder
+  local critic_system='Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'\''as PAS écrit ce code — un autre développeur l'\''a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel.'
+  run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" "$critic_system" || {
+    log WARN "Review adversariale échouée — on continue."
+  }
+
   # --- Test & Fix Loop (avec détection de boucle) ---
+  update_phase_tracking "test-fix" "$feature_name"
+  save_state
   attempt=0
   tests_passed=false
   LAST_ERROR_HASH=""
@@ -1740,7 +2449,27 @@ $(cat "$prev_feedback")"
     if [ $BUILD_EXIT -eq 0 ] && [ $TEST_EXIT -eq 0 ]; then
       tests_passed=true
       log INFO "Build + tests OK !"
+      clear_action_required
       break
+    fi
+
+    # Détecter les problèmes d'environnement (vars manquantes, services non configurés)
+    local combined_output="${BUILD_OUTPUT}${TEST_OUTPUT}"
+    if echo "$combined_output" | grep -qiE 'required.*env|env.*required|API.*key.*required|URL.*required|missing.*key|missing.*env|not configured|\.env'; then
+      local missing_vars env_errors proj_name_short
+      missing_vars=$(echo "$combined_output" | grep -oiE '[A-Z_]{3,}(URL|KEY|SECRET|TOKEN|ID)' | sort -u | head -5 || true)
+      env_errors=$(echo "$combined_output" | grep -iE 'required|missing|env|key|url|not configured' | head -5 || true)
+      proj_name_short=$(basename "$SCRIPT_DIR")
+      write_action_required "Variables d'environnement manquantes" \
+        "Le build ou les tests échouent car des variables d'environnement ne sont pas configurées.
+
+Variables probables : ${missing_vars:-voir erreur ci-dessous}
+
+${env_errors}
+
+Résoudre :
+  orc agent env ${proj_name_short}"
+      log WARN "Variables d'environnement manquantes détectées — voir 'orc status ${proj_name_short}'"
     fi
 
     attempt=$((attempt + 1))
@@ -1762,29 +2491,20 @@ $(cat "$prev_feedback")"
         break
       fi
 
-      # Réflexion structurée (pattern Reflexion) : l'IA écrit ce qu'elle a tenté et pourquoi ça a échoué
-      reflection_file="$PROJECT_DIR/logs/fix-reflections-$FEATURE_COUNT.md"
-      run_claude "Tu viens d'essayer de corriger la feature '$feature_name' (tentative $attempt/$MAX_FIX_ATTEMPTS) et ça a échoué.
+      # Construire le prompt de fix avec réflexion intégrée (1 invocation au lieu de 2)
+      reflection_file="$PROJECT_DIR/.orc/logs/fix-reflections-$FEATURE_COUNT.md"
+      fix_prompt=$(write_fix_prompt "$attempt" "$MAX_FIX_ATTEMPTS" \
+        "$BUILD_EXIT" "$(smart_truncate "$BUILD_OUTPUT" 3000)" \
+        "$TEST_EXIT" "$(smart_truncate "$TEST_OUTPUT" 3000)")
 
-BUILD (exit $BUILD_EXIT):
-${BUILD_OUTPUT: -1500}
+      # Réflexion structurée intégrée au fix (pattern Reflexion sans invocation séparée)
+      fix_prompt="$fix_prompt
 
-TESTS (exit $TEST_EXIT):
-${TEST_OUTPUT: -1500}
-
-Écris une RÉFLEXION STRUCTURÉE (3-5 lignes max) dans ce format :
+AVANT DE CODER, écris une RÉFLEXION STRUCTURÉE (3-5 lignes) dans .orc/logs/fix-reflections-$FEATURE_COUNT.md (append) :
 - **Ce que j'ai tenté :** [description de l'approche]
 - **Pourquoi ça a échoué :** [cause racine identifiée]
-- **Ce que je dois essayer :** [nouvelle approche concrète]
-
-Écris cette réflexion dans le fichier logs/fix-reflections-$FEATURE_COUNT.md (append).
-Ne modifie PAS le code dans cette étape — uniquement la réflexion." \
-        5 "$LOG_DIR/feature-$FEATURE_COUNT-reflection-$attempt.log" "reflection" "$feature_name" || true
-
-      # Construire le prompt de fix avec les réflexions passées
-      fix_prompt=$(write_fix_prompt "$attempt" "$MAX_FIX_ATTEMPTS" \
-        "$BUILD_EXIT" "${BUILD_OUTPUT: -3000}" \
-        "$TEST_EXIT" "${TEST_OUTPUT: -3000}")
+- **Ce que je vais essayer :** [nouvelle approche concrète]
+Puis applique la correction."
 
       # Injecter les réflexions passées
       if [ -f "$reflection_file" ]; then
@@ -1792,6 +2512,15 @@ Ne modifie PAS le code dans cette étape — uniquement la réflexion." \
 
 RÉFLEXIONS DES TENTATIVES PRÉCÉDENTES (en tenir compte pour ne PAS refaire les mêmes erreurs) :
 $(cat "$reflection_file")"
+      fi
+
+      # Injecter les problèmes connus inter-features
+      local known_issues="$PROJECT_DIR/.orc/known-issues.md"
+      if [ -f "$known_issues" ]; then
+        fix_prompt="$fix_prompt
+
+PROBLÈMES DÉJÀ RÉSOLUS SUR CE PROJET (solutions connues) :
+$(cat "$known_issues")"
       fi
 
       if [ "$same_error_count" -eq 1 ]; then
@@ -1815,14 +2544,31 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
   if [ "$tests_passed" = false ]; then
     log ERROR "Feature '$feature_name' abandonnée après $attempt tentatives."
     TOTAL_FAILURES=$((TOTAL_FAILURES + 1))
+    timeline_update_last "failed" "$attempt"
     notify "Feature '$feature_name' abandonnée après $attempt tentatives de fix."
     gh_comment "❌ **Feature #$FEATURE_COUNT** : $feature_name — abandonnée après $attempt tentatives"
     gh_create_abandoned_issue "$feature_name" "$attempt"
     # Retour sur main pour ne pas polluer la feature suivante
     run_in_project "git checkout main 2>/dev/null || true"
+  elif [ "$attempt" -gt 0 ]; then
+    # Fix réussi après des échecs → mémoriser dans known-issues.md pour les futures features
+    local known_issues="$PROJECT_DIR/.orc/known-issues.md"
+    local reflection_file="$PROJECT_DIR/.orc/logs/fix-reflections-$FEATURE_COUNT.md"
+    if [ -f "$reflection_file" ]; then
+      {
+        echo ""
+        echo "### Feature #$FEATURE_COUNT: $feature_name (résolu en $attempt tentatives)"
+        echo ""
+        # Extraire la dernière réflexion (celle qui a mené au fix)
+        tail -5 "$reflection_file"
+        echo ""
+      } >> "$known_issues"
+      log INFO "Problème résolu mémorisé dans known-issues.md"
+    fi
   fi
 
   # --- Reflect & Evolve ---
+  update_phase_tracking "reflect" "$feature_name"
   log INFO "Rétrospective..."
   reflect_prompt=$(render_phase "05-reflect.md" \
     "FEATURE_NAME=$feature_name" \
@@ -1845,7 +2591,7 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
 COMMANDE : $QUALITY_COMMAND
 EXIT CODE : $quality_exit
 OUTPUT :
-${quality_output: -3000}
+$(smart_truncate "$quality_output" 3000)
 
 Corrige le problème de qualité sans casser les tests existants.
 Exemples de problèmes : performance dégradée, bundle trop gros, couverture insuffisante, score lighthouse en baisse." \
@@ -1909,16 +2655,43 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
     fi
 
     log INFO "Feature '$feature_name' mergée."
+    # Cochage fiable de la roadmap (bash-based, en plus de la reflect phase)
+    mark_feature_done_bash "$feature_name"
+    # Changelog auto : ajouter l'entrée pour cette feature
+    update_changelog "$feature_name" "$attempt"
+    # Vérification fonctionnelle post-merge
+    run_functional_check "$feature_name"
+    # Mise à jour timeline
+    timeline_update_last "done" "$attempt"
     notify "Feature #$FEATURE_COUNT '$feature_name' mergée (\$$TOTAL_COST_USD)"
     gh_comment "✅ **Feature #$FEATURE_COUNT** : $feature_name — mergée (fix: $attempt, coût: \$${TOTAL_COST_USD})"
     gh_sync_roadmap  # Fermer l'issue correspondante
   fi
 
+  CURRENT_PHASE=""
+  CURRENT_FEATURE=""
   save_state
 
-  # --- Reset compteur epic ---
+  # --- Reset compteur epic + acceptance ---
   if [ "$EPIC_FEATURE_COUNT" -ge "$EPIC_SIZE" ]; then
-    gh_sync_milestone "Epic $(( (FEATURE_COUNT - 1) / EPIC_SIZE + 1 ))"
+    local epic_number=$(( (FEATURE_COUNT - 1) / EPIC_SIZE + 1 ))
+    gh_sync_milestone "Epic $epic_number"
+
+    # Phase acceptance : valider les user stories de cet epic
+    log PHASE "ACCEPTANCE — Epic $epic_number"
+    update_phase_tracking "acceptance" "epic-$epic_number"
+    local acceptance_prompt
+    acceptance_prompt=$(render_phase "04b-acceptance.md" \
+      "EPIC_NUMBER=$epic_number" \
+      "FEATURE_COUNT=$FEATURE_COUNT")
+    # DEV_COMMAND ajouté en fin de prompt (pas render_phase, car peut contenir / ou \)
+    acceptance_prompt="$acceptance_prompt
+
+COMMANDE DEV SERVER : ${DEV_COMMAND:-npm run dev}"
+    run_claude "$acceptance_prompt" 20 "$LOG_DIR/acceptance-epic-$epic_number.log" "acceptance" "epic-$epic_number" || {
+      log WARN "Acceptance échouée — on continue."
+    }
+
     EPIC_FEATURE_COUNT=0
   fi
 
@@ -1932,6 +2705,19 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
     log INFO "Méta-rétrospective terminée."
     gh_create_release "v0.$FEATURE_COUNT.0" "Meta-retro après $FEATURE_COUNT features"
     gh_sync_roadmap
+
+    # Phase tech-debt : déclencher si signaux de dette (trop d'échecs)
+    if [ "$TOTAL_FAILURES" -gt 0 ] && [ $((TOTAL_FAILURES * 100 / FEATURE_COUNT)) -ge 30 ]; then
+      log PHASE "TECH-DEBT — $TOTAL_FAILURES échecs sur $FEATURE_COUNT features (>30%)"
+      update_phase_tracking "tech-debt" ""
+      local debt_prompt
+      debt_prompt=$(render_phase "06b-tech-debt.md" \
+        "FEATURE_COUNT=$FEATURE_COUNT" \
+        "TOTAL_FAILURES=$TOTAL_FAILURES")
+      run_claude "$debt_prompt" 20 "$LOG_DIR/tech-debt-$FEATURE_COUNT.log" "tech-debt" || {
+        log WARN "Tech-debt échouée — on continue."
+      }
+    fi
   fi
 
   # --- Pause humaine configurable ---
@@ -1946,20 +2732,22 @@ done
 # ============================================================
 
 if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
+  workflow_transition "evolve"
   EVOLVE_CYCLES=$((EVOLVE_CYCLES + 1))
   max_evolve="${MAX_EVOLVE_CYCLES:-0}"
 
   if [ "$max_evolve" -gt 0 ] && [ "$EVOLVE_CYCLES" -gt "$max_evolve" ]; then
     log WARN "Limite de cycles evolve atteinte ($EVOLVE_CYCLES/$max_evolve) — arrêt."
     notify "Limite de cycles evolve atteinte ($max_evolve). Projet terminé automatiquement."
+    MAIN_LOOP_CONTINUE=false
   else
     log PHASE "PHASE FINALE — ÉVOLUTION (cycle $EVOLVE_CYCLES)"
     evolve_prompt=$(render_phase "07-evolve.md")
     run_claude "$evolve_prompt" 30 "$LOG_DIR/07-evolve.log" "evolve"
 
-    if [ ! -f "$PROJECT_DIR/DONE.md" ] && grep -q '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null; then
+    if [ ! -f "$PROJECT_DIR/DONE.md" ] && grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
       # Compter les features ajoutées par l'IA
-      new_features=$(grep -c '^\- \[ \]' "$PROJECT_DIR/ROADMAP.md" 2>/dev/null || echo "0")
+      new_features=$(grep -c '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null || true)
       AI_ROADMAP_ADDS=$((AI_ROADMAP_ADDS + new_features))
       log INFO "Nouvelles features ajoutées par l'IA : $new_features (total IA: $AI_ROADMAP_ADDS)"
 
@@ -1973,16 +2761,24 @@ if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
       fi
 
       log INFO "Nouvelles features ajoutées — relancement de la boucle."
+      workflow_transition "features"
       save_state
-      exec "$0"
+      # Relancer la boucle englobante au lieu de exec "$0"
+    else
+      MAIN_LOOP_CONTINUE=false
     fi
   fi
+else
+  MAIN_LOOP_CONTINUE=false
 fi
+
+done  # fin MAIN_LOOP (while MAIN_LOOP_CONTINUE)
 
 # ============================================================
 # PHASE POST-PROJET — AUTO-AMÉLIORATION DE L'ORCHESTRATEUR
 # ============================================================
 
+workflow_transition "post-project"
 notify "Projet terminé ! Features: $FEATURE_COUNT, Échecs: $TOTAL_FAILURES, Coût: \$$TOTAL_COST_USD"
 log PHASE "AUTO-AMÉLIORATION DE L'ORCHESTRATEUR"
 
@@ -1993,10 +2789,10 @@ Le projet est terminé. Analyse l'ensemble des logs pour améliorer
 l'orchestrateur lui-même (pas le projet, l'OUTIL qui pilote les projets).
 
 Lis :
-1. Tous les fichiers logs/retrospective-*.md
-2. Tous les fichiers logs/meta-retrospective-*.md
-3. Tous les fichiers logs/fix-reflections-*.md
-4. Tous les fichiers logs/human-feedback-*.md
+1. Tous les fichiers .orc/logs/retrospective-*.md
+2. Tous les fichiers .orc/logs/meta-retrospective-*.md
+3. Tous les fichiers .orc/logs/fix-reflections-*.md
+4. Tous les fichiers .orc/logs/human-feedback-*.md
 5. Le CLAUDE.md final (les règles que tu t'es auto-ajoutées)
 6. Les skills dans .claude/skills/ (celles que tu as créées)
 
@@ -2042,7 +2838,7 @@ Sois concret et actionnable.
 IMPROVE
 )" 30 "$LOG_DIR/orchestrator-improvements.log" "self-improve"
 
-log INFO "Suggestions d'amélioration : project/orchestrator-improvements.md"
+log INFO "Suggestions d'amélioration : orchestrator-improvements.md"
 
 # Extraire les learnings et les copier dans le template pour les futurs projets
 if [ -f "$PROJECT_DIR/orchestrator-improvements.md" ]; then
@@ -2096,6 +2892,16 @@ Si les améliorations sont mineures ou ne changent pas la structure, ne modifie 
 fi
 
 # ============================================================
+# DOCUMENTATION UTILISATEUR
+# ============================================================
+
+log PHASE "DOCUMENTATION UTILISATEUR"
+update_phase_tracking "user-docs" ""
+run_claude "$(cat "$SCRIPT_DIR/phases/08-user-docs.md")" 15 "$LOG_DIR/08-user-docs.log" "user-docs" || {
+  log WARN "Génération doc utilisateur échouée — pas grave."
+}
+
+# ============================================================
 # BILAN FINAL
 # ============================================================
 
@@ -2103,25 +2909,86 @@ gh_sync_roadmap
 gh_create_release "v1.0.0" "Projet terminé — $FEATURE_COUNT features"
 gh_close_tracking_issue
 
+# Vérification fonctionnelle finale
+if [ -n "${FUNCTIONAL_CHECK_COMMAND:-}" ]; then
+  log INFO "Vérification fonctionnelle finale..."
+  final_func_output=$(run_in_project "$FUNCTIONAL_CHECK_COMMAND 2>&1") && final_func_exit=0 || final_func_exit=$?
+  if [ $final_func_exit -eq 0 ]; then
+    log INFO "App fonctionnelle en fin de run ✓"
+    LAST_FUNCTIONAL_CHECK=true
+  else
+    log ERROR "App NON fonctionnelle en fin de run ✗"
+    LAST_FUNCTIONAL_CHECK=false
+    notify "ALERTE : App non fonctionnelle en fin de run !"
+  fi
+  save_state
+fi
+
+workflow_transition "done"
+CURRENT_PHASE="done"
+CURRENT_FEATURE=""
+RUN_STATUS="completed"
+RUN_ENDED_AT=$(date -Iseconds)
+save_state
+
+# Déploiement automatique si configuré (post-completion, ne bloque pas le statut "done")
+if [ -n "${DEPLOY_COMMAND:-}" ]; then
+  if [ "${LAST_FUNCTIONAL_CHECK:-null}" = "true" ]; then
+    log PHASE "DÉPLOIEMENT"
+    log INFO "Commande : $DEPLOY_COMMAND"
+    deploy_output=$(run_in_project "$DEPLOY_COMMAND 2>&1") && deploy_exit=0 || deploy_exit=$?
+    if [ $deploy_exit -eq 0 ]; then
+      log INFO "Déploiement réussi ✓"
+      notify "Déploiement réussi ! Projet $PROJECT_NAME déployé."
+    else
+      log ERROR "Déploiement échoué (exit $deploy_exit)"
+      log ERROR "Output : $(smart_truncate "$deploy_output" 1000)"
+      notify "Déploiement échoué pour $PROJECT_NAME."
+    fi
+  elif [ "${LAST_FUNCTIONAL_CHECK:-null}" = "false" ]; then
+    log WARN "Déploiement ignoré — app non fonctionnelle."
+  else
+    log INFO "Déploiement ignoré — aucune vérification fonctionnelle configurée."
+  fi
+fi
+
 log PHASE "TERMINÉ"
 log INFO "Features complétées : $FEATURE_COUNT"
 log INFO "Features en échec : $TOTAL_FAILURES"
 
 if [ -f "$PROJECT_DIR/DONE.md" ]; then
-  log INFO "Le projet est déclaré terminé. Voir project/DONE.md"
+  log INFO "Le projet est déclaré terminé. Voir DONE.md"
 else
   log WARN "L'orchestrateur s'est arrêté (limite MAX_FEATURES=$MAX_FEATURES atteinte)."
 fi
 
 print_cost_summary
 
+# Calcul de la durée du run
+run_end_time=$(date +%s)
+run_start_epoch=$(date -d "$RUN_STARTED_AT" +%s 2>/dev/null || echo "$run_end_time")
+run_duration_s=$((run_end_time - run_start_epoch))
+run_hours=$((run_duration_s / 3600))
+run_minutes=$(( (run_duration_s % 3600) / 60 ))
+if [ $run_hours -gt 0 ]; then
+  run_duration_str="${run_hours}h${run_minutes}m"
+else
+  run_duration_str="${run_minutes}m"
+fi
+
 echo ""
 printf "${GREEN}═══════════════════════════════════════════════════${NC}\n"
 printf "${GREEN}  Agent terminé.${NC}\n"
-printf "${GREEN}  Features : %s | Échecs : %s${NC}\n" "$FEATURE_COUNT" "$TOTAL_FAILURES"
+printf "${GREEN}  Features : %s | Échecs : %s | Durée : %s${NC}\n" "$FEATURE_COUNT" "$TOTAL_FAILURES" "$run_duration_str"
 printf "${GREEN}  Coût total : \$%s USD${NC}\n" "$TOTAL_COST_USD"
+if [ -n "${FUNCTIONAL_CHECK_COMMAND:-}" ]; then
+  if [ "${LAST_FUNCTIONAL_CHECK:-}" = "true" ]; then
+    printf "${GREEN}  App fonctionnelle : ✓${NC}\n"
+  else
+    printf "${RED}  App fonctionnelle : ✗${NC}\n"
+  fi
+fi
 printf "${GREEN}  Logs : %s/${NC}\n" "$LOG_DIR"
-printf "${GREEN}  Tokens : %s${NC}\n" "$TOKENS_FILE"
 printf "${GREEN}  Projet : %s/${NC}\n" "$PROJECT_DIR"
 if [ -f "$PROJECT_DIR/orchestrator-improvements.md" ]; then
   printf "${GREEN}  Améliorations : %s/orchestrator-improvements.md${NC}\n" "$PROJECT_DIR"

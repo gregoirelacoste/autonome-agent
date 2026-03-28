@@ -35,11 +35,16 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
             │   Veille ciblée (avant chaque epic)       │
             │       │                                   │
             │       ▼                                   │
-            │   Implement ──▶ Test ──▶ Fix (loop) ─┐   │
+            │   Plan ──▶ Implement ──▶ Lint ──▶ Critic ──▶ Test ──▶ Fix (loop) ─┐ │
             │                                      │   │
             │       ┌──────────────────────────────┘   │
             │       ▼                                   │
-            │   Reflect & Evolve                        │
+            │   Reflect                                 │
+            │       │                                   │
+            │       ├── (fin d'epic) → Acceptance       │
+            │       ├── (>30% échecs) → Tech-Debt       │
+            │       ▼                                   │
+            │   Evolve (score maturité /30)             │
             │   - met à jour CLAUDE.md                  │
             │   - crée/améliore des skills              │
             │   - coche la feature, note les leçons     │
@@ -66,9 +71,10 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
                             ...
                             │
                             ▼
-                    ROADMAP vide ?
-                    ├── non → nouvelles features proposées → boucle
-                    └── oui → DONE.md → fin
+                    Score maturité /30 ?
+                    ├── >= 24 → DONE.md → deploy (si DEPLOY_COMMAND) → fin
+                    ├── >= 18 → 3 features ciblées → boucle
+                    └── < 18  → corrections prioritaires → boucle
 ```
 
 ---
@@ -149,11 +155,12 @@ research/
 **Quand :** Après la recherche initiale, puis à chaque méta-rétro.
 
 **Ce que Claude fait :**
-1. Croise `BRIEF.md` (vision immuable) avec `research/INDEX.md` (données marché)
-2. Structure `ROADMAP.md` en epics de 3-5 features liées
-3. Chaque feature référence un insight de la recherche
-4. Ordonne par : impact utilisateur × faisabilité
-5. Quick wins en premier
+1. **Score le brief** sur 5 critères (clarté, scope, stack, succès, users) — note /25. Si < 15/25, ajoute des hypothèses pour combler les manques
+2. Croise `BRIEF.md` (vision immuable) avec `research/INDEX.md` (données marché)
+3. Structure `ROADMAP.md` en 2 phases : **MVP** (5-8 features) + **Améliorations** (optionnel, max 15 features totales)
+4. Chaque feature référence un insight de la recherche
+5. Ordonne par : impact utilisateur × faisabilité
+6. Quick wins en premier, MVP fonctionnel seul
 
 **Format ROADMAP.md :**
 ```markdown
@@ -178,31 +185,66 @@ Recherche focalisée sur le domaine de l'epic :
 
 Met à jour `research/` et ajuste les specs dans `ROADMAP.md`.
 
-### 3b. Implémentation
+### 3b. Micro-phase Plan
+
+5 turns max, modèle léger (`CLAUDE_MODEL_LIGHT`). Produit `.orc/logs/plan-N.md` :
+- Fichiers à modifier, interfaces, tests, risques
+- Le plan est injecté dans le prompt d'implémentation
+- Détecte les erreurs de conception AVANT de coder, réduit les cycles de fix
+
+### 3c. Implémentation
 
 1. Crée une branche `feature/<nom>`
-2. Lit le code existant et `research/INDEX.md`
+2. Lit le plan + le code existant (via INDEX.md + auto-map.md injectés)
 3. Implémente la feature
-4. Écrit les tests E2E Playwright
-5. Build + tests locaux
-6. Auto-review du code
-7. Commit atomique
+4. Écrit les tests
+5. Build
+6. Commit atomique
 
-### 3c. Test & Fix Loop
+### 3d. Lint
+
+Si `LINT_COMMAND` est défini, exécuté entre implement et la review adversariale.
+En cas d'échec, correction automatique par Claude (10 turns max) avant de continuer.
+
+### 3e. Review adversariale (Critic) — Multi-agent
+
+`phases/03b-critic.md` — 10 turns max, modèle **principal** (pas léger).
+Utilise `--append-system-prompt` avec un persona adversarial ("reviewer senior sceptique")
+distinct du coder pour éliminer le biais de confirmation.
+- Review le diff vs main
+- Corrige max 3 bugs AVANT le cycle de test coûteux
+- Persona séparé = multi-agent (le critic ne partage pas le contexte du coder)
+
+### 3f. Test & Fix Loop
 
 ```
 attempt = 0
 while (build échoue OU tests échouent) AND attempt < MAX_FIX:
-    Claude analyse l'erreur
+    Claude analyse l'erreur (error_hash pour détecter les boucles)
+    Claude écrit une réflexion structurée (fix-reflections-N.md)
+    known-issues.md injecté (mémoire inter-features)
     Claude corrige le code
     Relance build + tests
     attempt++
+
+    Même erreur 2x → prompt "change d'approche"
+    Même erreur 3x → abandon anticipé
 
 Si attempt == MAX_FIX:
     Feature marquée en échec, on passe à la suite
 ```
 
-### 3d. Reflect & Evolve (auto-amélioration)
+### 3g. Acceptance (fin d'epic)
+
+`phases/04b-acceptance.md` — exécutée après chaque epic (toutes les `EPIC_SIZE` features).
+Valide les user stories du BRIEF de bout en bout :
+1. Lit le BRIEF et les features cochées de l'epic
+2. Lance l'app (`DEV_COMMAND`) et teste les scénarios utilisateur
+3. Écrit un rapport `acceptance-N.md` avec score X/Y scénarios passés
+4. Corrige max 5 problèmes critiques directement (pas de nouvelles features)
+5. Les problèmes non critiques vont en backlog
+
+### 3h. Reflect & Evolve (auto-amélioration)
 
 Après chaque feature, Claude enrichit sa connaissance du projet :
 
@@ -239,10 +281,17 @@ Après chaque feature, Claude enrichit sa connaissance du projet :
 
 ## Phase 5 — ÉVOLUTION (quand la roadmap est vide)
 
-Claude analyse le projet terminé et :
-1. Propose de nouvelles features basées sur la veille récente
-2. Identifie des optimisations ou refactorings
-3. Ou déclare le projet terminé → crée `DONE.md` avec bilan final
+Claude évalue le projet avec un **score de maturité /30** sur 6 critères :
+parcours utilisateur complet, CRUD fonctionnel, gestion d'erreurs, UX cohérente,
+couverture de tests, documentation.
+
+1. **Score >= 24/30** → projet terminé → crée `DONE.md` → déploiement auto si `DEPLOY_COMMAND` configuré
+2. **Score >= 18/30** → ajoute 3 features ciblées sur les faiblesses → relance la boucle
+3. **Score < 18/30** → corrections prioritaires sur les critères les plus faibles
+
+Le cycle evolve utilise une boucle `while` interne (pas `exec "$0"`) pour
+relancer la boucle feature sans redémarrer le process. Le compteur `evolve_cycle`
+est incrémenté et limité par `MAX_EVOLVE_CYCLES`.
 
 ---
 
@@ -274,13 +323,24 @@ Feature 20 : index compact + détail à la demande → contexte minimal, experti
 
 ## Configuration — Intervention humaine
 
-Tout est configurable dans `.orc/config.sh` :
+Tout est configurable dans `.orc/config.sh` (migration auto des nouveaux paramètres via `migrate_config()`) :
 
 ```bash
 # === GARDE-FOUS ===
-MAX_FIX_ATTEMPTS=5              # Tentatives de correction par feature
+MAX_FIX_ATTEMPTS=3              # Tentatives de correction par feature
 MAX_FEATURES=50                 # Nombre total de features avant arrêt
 MAX_TURNS_PER_INVOCATION=50     # Limite de turns par appel Claude
+
+# === BUDGET ===
+MAX_BUDGET_USD="200.00"         # Budget max en USD (prédictif + post-hoc)
+                                # Prédictif : refuse de lancer si budget insuffisant
+                                # Post-hoc : vérifie après chaque invocation
+
+# === MODÈLES (adaptatifs) ===
+CLAUDE_MODEL=""                 # Modèle principal (implement, fix, critic). Vide = défaut CLI
+CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger (plan, reflect, research)
+                                # resolve_model() choisit automatiquement selon la phase
+                                # MODEL_PRICING[] contient les tarifs par préfixe de modèle
 
 # === RYTHME ===
 META_RETRO_FREQUENCY=5          # Méta-rétrospective toutes les N features
@@ -297,12 +357,23 @@ MAX_AI_ROADMAP_ADDS=5           # Max features ajoutées par l'IA avant pause
 NOTIFY_COMMAND=""               # Commande de notification (ex: notify-send, slack webhook)
 
 # === RECHERCHE ===
-MAX_TURNS_RESEARCH_INITIAL=80   # Budget recherche initiale
-MAX_TURNS_RESEARCH_EPIC=40      # Budget veille ciblée par epic
-MAX_TURNS_RESEARCH_TREND=50     # Budget veille tendances
+MAX_TURNS_RESEARCH_INITIAL=50   # Budget recherche initiale
+MAX_TURNS_RESEARCH_EPIC=20      # Budget veille ciblée par epic
+MAX_TURNS_RESEARCH_TREND=30     # Budget veille tendances
 
 # === TECHNIQUE ===
-QUALITY_COMMAND=""               # Quality gate post-tests (ex: lighthouse, bundle-size)
+LINT_COMMAND="npm run lint"     # Lint entre implement et critic (vide = désactivé)
+QUALITY_COMMAND=""              # Quality gate post-tests (ex: lighthouse, bundle-size)
+DEPLOY_COMMAND=""               # Déploiement auto en fin de projet (ex: scripts/deploy.sh, vercel deploy --prod)
+FUNCTIONAL_CHECK_COMMAND=""     # Vérification fonctionnelle post-merge
+
+# === TIMEOUTS ===
+CLAUDE_TIMEOUT=900              # Timeout global par invocation (secondes)
+STALL_KILL_THRESHOLD=60         # Checks sans données avant kill auto (×5s = 5min)
+declare -A PHASE_TIMEOUTS=(     # Timeouts par phase (surcharge CLAUDE_TIMEOUT)
+    [plan]=120 [implement]=900 [fix]=600 [critic]=300
+    [reflect]=180 [research]=600 [strategy]=600 [meta-retro]=600
+)
 ```
 
 **Modes d'utilisation :**
@@ -344,6 +415,7 @@ changé et le résumé de la rétrospective avant d'approuver un merge.
 Quand l'agent tourne en background, l'humain peut déposer des fichiers dans `.orc/` :
 - `.orc/pause-requested` → pause au prochain checkpoint (attend `.orc/continue` pour reprendre)
 - `.orc/stop-after-feature` → arrêt propre après la feature en cours
+- `.orc/skip-feature` → saute la feature en cours, passe à la suivante
 
 ### Notifications
 
@@ -446,23 +518,99 @@ du même blob global. `run_claude()` injecte un "context hint" selon la phase :
 
 | Phase | Contexte injecté |
 |---|---|
-| **implement** | INDEX.md + auto-map.md + fichiers de détail pertinents + stack-conventions.md |
-| **fix** | auto-map.md + security.md + réflexions passées |
-| **strategy** | INDEX.md + architecture.md + research/INDEX.md |
-| **reflect** | auto-map.md (vérité) + INDEX.md + fichiers de détail à mettre à jour |
-| **meta-retro** | INDEX.md + auto-map.md + audit complet de cohérence |
+| **plan** | INDEX.md + auto-map.md (injectés directement) |
+| **implement** | INDEX.md + auto-map.md (injectés) + fichiers de détail pertinents + stack-conventions.md |
+| **fix** | auto-map.md (injecté) + security.md + réflexions passées + known-issues.md |
+| **strategy** | INDEX.md (injecté) + architecture.md + research/INDEX.md |
+| **reflect** | auto-map.md (injecté) + INDEX.md + fichiers de détail à mettre à jour |
+| **meta-retro** | INDEX.md + auto-map.md (injectés) + audit complet de cohérence |
 
 L'IA charge ~200 tokens de contexte pertinent au lieu de ~2000 tokens de tout.
+
+### State machine (workflow_phase)
+
+`WORKFLOW_PHASE` dans `state.json` pilote le workflow global. Transitions validées
+par `workflow_transition()` :
+
+```
+init → bootstrap → research → strategy → features ⇄ evolve → post-project → done
+                                                   ↘ crashed / stopped / budget_exceeded
+```
+
+Les guards fichier existants (CLAUDE.md, ROADMAP.md, etc.) restent comme filet de
+sécurité. La reprise après crash utilise `WORKFLOW_PHASE` pour savoir exactement où
+reprendre, sans re-scanner tous les fichiers.
+
+### Multi-agent (critic)
+
+Le système utilise deux "agents" distincts au sein du même orchestrateur :
+- **Coder** — Claude avec le system prompt standard du projet (CLAUDE.md + skills)
+- **Critic** — Claude avec `--append-system-prompt` injectant un persona adversarial
+  ("reviewer senior sceptique"). Le critic ne partage pas le contexte du coder.
+
+Ce découplage élimine le biais de confirmation : le critic review le diff sans
+avoir participé à l'implémentation. Modèle principal (pas léger) pour la qualité.
+
+### Budget prédictif + post-hoc
+
+Deux mécanismes complémentaires pour `MAX_BUDGET_USD` (défaut 200$) :
+- **Prédictif** — avant chaque invocation, `run_claude()` estime le coût probable
+  (~4000 tokens input + ~2000 output) et refuse de lancer si le budget serait dépassé.
+- **Post-hoc** — après chaque invocation, le coût réel est ajouté au total et vérifié.
+
+### Pricing dynamique
+
+`MODEL_PRICING` (associative array) contient les tarifs par préfixe de modèle.
+`get_model_pricing()` résout le coût input/output pour le modèle effectif.
+Préfixes triés par longueur décroissante pour match le plus spécifique.
+Fallback sur tarif Sonnet + warning si modèle inconnu.
+
+### Apprentissage adaptatif des turns
+
+`adaptive_max_turns()` calcule le `max_turns` optimal par phase :
+1. Lit l'historique des turns réels dans `tokens.json` (`by_phase.X.turns_history[]`)
+2. Exclut les invocations tronquées par max_turns (feedback loop)
+3. Calcule p75 + 30% marge
+4. Requiert 5+ échantillons valides, ne dépasse jamais le défaut
+
+Résultat : après quelques features, une phase qui utilise ~12 turns ne réserve
+plus 50 turns, ce qui réduit les stalls et améliore le budget prédictif.
+
+### Migration config auto
+
+`migrate_config()` exécutée au démarrage de chaque run. Compare `.orc/config.sh`
+avec `config.default.sh` et ajoute les paramètres manquants (avec commentaire
+"# Added by migrate_config"). Traitement spécial pour `PHASE_TIMEOUTS`
+(`declare -A`). Permet de mettre à jour orc sans recréer les projets.
+
+### Mémoire inter-features (known-issues.md)
+
+`.orc/known-issues.md` est alimenté automatiquement quand un fix réussit après
+des échecs. Contient la réflexion qui a mené au fix (cause racine + solution).
+Injecté dans le prompt de fix des features suivantes pour ne pas répéter les
+mêmes erreurs. Complémentaire aux réflexions structurées (qui sont par-feature).
+
+### Troncation intelligente (smart_truncate)
+
+`smart_truncate(text, max_chars)` garde le début (~1/6) et la fin (~5/6) des logs.
+Utilisé pour les outputs build/test qui peuvent être très longs. Préserve le
+message d'erreur initial (souvent en haut) et le résumé final (en bas).
+
+### Métriques enrichies
+
+`tokens.json` contient désormais par invocation : modèle utilisé, turns réels,
+phase, feature. Permet l'analyse post-run des coûts par modèle et l'apprentissage
+adaptatif des turns.
 
 ---
 
 ## Structure complète des fichiers
 
 ```
-project/
+~/projects/mon-projet/          # Repo git unique (structure aplatie)
 ├── BRIEF.md                    # Vision produit (IMMUABLE — jamais modifié par Claude)
 ├── CLAUDE.md                   # Instructions (auto-évolutif)
-├── ROADMAP.md                  # Backlog en epics (auto-évolutif)
+├── .orc/ROADMAP.md             # Backlog en epics (auto-évolutif)
 ├── DONE.md                     # Créé quand le projet est terminé
 │
 ├── codebase/                    # Mémoire structurée du projet (index sémantique)
@@ -512,48 +660,49 @@ project/
 
 | Risque | Protection |
 |---|---|
-| Boucle infinie de fix | `MAX_FIX_ATTEMPTS` + détection de boucle (hash erreur) |
-| Roadmap infinie | `MAX_FEATURES` + `MAX_EVOLVE_CYCLES` + DONE.md |
+| Boucle infinie de fix | `MAX_FIX_ATTEMPTS` + détection de boucle (`error_hash`) + abandon à 3x même erreur |
+| Roadmap infinie | `MAX_FEATURES` + `MAX_EVOLVE_CYCLES` + score maturité /30 (>= 24 → DONE) |
 | IA ajoute trop de features | `MAX_AI_ROADMAP_ADDS` force une pause humaine |
 | CLAUDE.md trop long | Nettoyage forcé à chaque méta-rétro |
 | Recherche sans fin | Max turns par phase de recherche |
 | Recherche non fiable | Cross-validation + score de confiance |
 | Infos obsolètes | Fichiers datés, élagage > 3 mois |
 | Dérive vs vision | BRIEF.md immuable, vérifié aux méta-rétros + evolve |
-| Coût tokens | `--max-turns` par invocation + `MAX_BUDGET_USD` |
-| Régression qualité | Tests E2E + `QUALITY_COMMAND` optionnel |
+| Coût tokens | Budget prédictif + post-hoc (`MAX_BUDGET_USD`) + `adaptive_max_turns` |
+| Claude bloqué (stall) | `STALL_KILL_THRESHOLD` kill auto après N checks sans données |
+| Régression qualité | Tests E2E + `QUALITY_COMMAND` + `FUNCTIONAL_CHECK_COMMAND` + acceptance epic |
+| Dette technique accumulée | Phase tech-debt auto quand >30% d'échecs (refactoring ciblé, max 5) |
+| Brief incomplet/ambigu | Brief scoring /25 en phase strategy — hypothèses ajoutées si < 15 |
 | Auto-modification destructive | Git versionne tout, rollback possible |
 | Hallucination de sources | Règle : URL exacte + cross-validation 2 sources |
 | Absence de l'humain | `PAUSE_EVERY_N_FEATURES` + signaux file-based + notifications |
 | Perte de contexte inter-projets | `learnings/` accumule les apprentissages |
+| Erreurs répétées inter-features | `known-issues.md` injecté dans les prompts de fix |
+| Config obsolète après update | `migrate_config()` ajoute les paramètres manquants |
+| State incohérent après crash | State machine (`workflow_phase`) + guards fichier |
 
 ---
 
 ## Lancement
 
 ```bash
-# Cloner le repo orchestrateur
-git clone git@github.com:gregoirelacoste/orc.git mon-projet
-cd mon-projet
+# Cloner orc (une seule fois)
+git clone git@github.com:gregoirelacoste/orc.git
+cd orc
 
-# Option A : Brief assisté par Claude (recommandé)
-./orchestrator.sh --brief
-# ou avec une idée de départ :
-./orchestrator.sh --brief "un comparateur d'assurances auto pour les jeunes conducteurs"
-
-# Option B : Brief manuel
-cp BRIEF.template.md BRIEF.md
-vim BRIEF.md
+# Créer un projet (workspace séparé dans ~/projects/)
+./orc.sh agent new mon-projet
 
 # Ajuster la config si besoin
-vim config.sh
+vim ~/projects/mon-projet/.orc/config.sh
 
 # Lancer l'agent autonome
-nohup ./orchestrator.sh > logs/orchestrator.log 2>&1 &
+./orc.sh agent start mon-projet
 
 # Surveiller
-tail -f logs/orchestrator.log
-watch -n 30 'grep -c "\[x\]" project/ROADMAP.md'
+./orc.sh dash mon-projet          # Dashboard live
+./orc.sh l mon-projet             # Logs temps réel
+./orc.sh s mon-projet             # Status détaillé
 ```
 
 ---

@@ -57,10 +57,16 @@ ssh root@<vps-ip> 'bash -s' < deploy.sh
 Claude te pose ~22 questions pour rédiger le brief produit (`BRIEF.md`).
 Le workspace est créé dans `~/projects/mon-projet/`.
 
-Si tu as déjà un brief :
+Si tu as déjà un brief (Claude le lit, pose des questions, l'enrichit) :
 
 ```bash
 ./orc.sh agent new mon-projet --brief briefs/mon-brief.md
+```
+
+Sans clarification (copie le brief tel quel) :
+
+```bash
+./orc.sh agent new mon-projet --brief briefs/mon-brief.md --no-clarify
 ```
 
 ### 2. Configurer (optionnel)
@@ -76,12 +82,16 @@ Les paramètres clés :
 | Paramètre | Défaut | Description |
 |---|---|---|
 | `MAX_FEATURES` | 50 | Nombre total de features avant arrêt |
-| `MAX_FIX_ATTEMPTS` | 5 | Tentatives de fix par feature |
+| `MAX_FIX_ATTEMPTS` | 3 | Tentatives de fix par feature |
+| `MAX_BUDGET_USD` | 200.00 | Budget max en USD (prédictif + post-hoc) |
 | `REQUIRE_HUMAN_APPROVAL` | false | Valider chaque merge manuellement |
 | `PAUSE_EVERY_N_FEATURES` | 0 | Pause toutes les N features (0 = jamais) |
 | `BUILD_COMMAND` | `npm run build` | Commande de build |
 | `TEST_COMMAND` | `npx playwright test` | Commande de test |
-| `CLAUDE_MODEL` | *(défaut CLI)* | Modèle Claude à utiliser |
+| `DEPLOY_COMMAND` | *(vide)* | Déploiement auto en fin de projet |
+| `CLAUDE_MODEL` | *(défaut CLI)* | Modèle principal (implement, fix, critic) |
+| `CLAUDE_MODEL_LIGHT` | `claude-haiku-4-5` | Modèle léger (plan, reflect, research) |
+| `STALL_KILL_THRESHOLD` | 60 | Checks sans données avant kill auto (x5s) |
 
 Voir `config.default.sh` pour la liste complète.
 
@@ -91,7 +101,7 @@ Voir `config.default.sh` pour la liste complète.
 ./orc.sh agent start mon-projet
 ```
 
-L'orchestrateur tourne en background. Le code est généré dans `~/projects/mon-projet/project/`.
+L'orchestrateur tourne en background. Le code est généré dans `~/projects/mon-projet/`.
 
 ### 4. Suivre l'avancement
 
@@ -114,6 +124,9 @@ touch ~/projects/mon-projet/.orc/pause-requested
 # Arrêter proprement après la feature en cours
 touch ~/projects/mon-projet/.orc/stop-after-feature
 
+# Sauter la feature en cours (passe à la suivante)
+touch ~/projects/mon-projet/.orc/skip-feature
+
 # Arrêt immédiat
 ./orc.sh agent stop mon-projet
 ```
@@ -133,7 +146,11 @@ Configurables dans `.orc/config.sh` :
 ### Projets
 
 ```bash
-orc agent new <nom> [--brief x.md]    # Créer un projet
+orc agent new <nom>                    # Créer un projet (wizard interactif)
+orc agent new <nom> --brief x.md      # Brief existant + clarification IA
+orc agent new <nom> --brief x.md --no-clarify  # Brief direct
+orc agent new <nom> --github           # Créer + repo GitHub
+orc agent github <nom>                 # Créer le repo GitHub après coup
 orc agent start <nom>                  # Lancer en background
 orc agent stop <nom>                   # Arrêter proprement
 orc agent restart <nom>                # Redémarrer
@@ -161,6 +178,7 @@ orc admin version                      # Version + vérification dépendances
 ```bash
 orc s              # → orc agent status
 orc s <nom>        # → orc agent status <nom>
+orc dash <nom>     # → orc dashboard <nom>
 orc l <nom>        # → orc agent logs <nom>
 orc r              # → orc roadmap
 ```
@@ -174,14 +192,19 @@ BRIEF.md (immuable)
 BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
                                            │
                                            ▼
-                                    ┌──────────────┐
-                                    │ BOUCLE x N   │
-                                    │              │
-                                    │ Veille ciblée │
-                                    │ Implement     │
-                                    │ Test & Fix    │
-                                    │ Reflect       │
-                                    └──────┬───────┘
+                                    ┌──────────────────┐
+                                    │   BOUCLE x N     │
+                                    │                  │
+                                    │ Veille ciblée    │
+                                    │ Plan (micro)     │
+                                    │ Implement        │
+                                    │ Lint             │
+                                    │ Critic (review)  │
+                                    │ Tests & Fix      │
+                                    │ Acceptance (epic) │
+                                    │ Tech-Debt (>30%) │
+                                    │ Reflect          │
+                                    └──────┬───────────┘
                                            │
                                   toutes les N features
                                            │
@@ -190,7 +213,9 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
                                     Repriorisation
                                            │
                                            ▼
-                                    Nouvelle itération...
+                                    EVOLVE (maturité /30)
+                                    >= 24 → DONE + deploy
+                                    < 24  → nouvelles features
 ```
 
 L'agent améliore ses propres outils au fil du projet :
@@ -201,26 +226,24 @@ L'agent améliore ses propres outils au fil du projet :
 ## Structure d'un workspace
 
 ```
-~/projects/mon-projet/
+~/projects/mon-projet/       ← Repo git unique
 ├── BRIEF.md                 ← Brief produit (source de vérité, immuable)
-├── orchestrator.sh          ← Boucle principale
-├── phases/                  ← Prompts par phase (modifiables)
-├── skills-templates/        ← Skills copiées dans le projet
-├── .orc/                    ← État orchestrateur
+├── orchestrator.sh          → symlink vers orc/
+├── phases/                  → symlink vers orc/
+├── CLAUDE.md                ← Auto-généré et auto-amélioré
+├── .claude/skills/          ← Skills de l'agent
+├── .orc/                    ← État orchestrateur + artéfacts
 │   ├── config.sh            ← Configuration du projet
-│   ├── state.json           ← Compteurs, reprise après crash
-│   ├── tokens.json          ← Tracking des coûts
-│   ├── human-notes.md       ← Notes injectées dans le prompt
-│   ├── .pid                 ← PID du process en cours
+│   ├── BRIEF.md             ← Copie du brief
+│   ├── ROADMAP.md           ← Roadmap features
+│   ├── codebase/            ← Carte sémantique du code
+│   ├── research/            ← Veille marché
+│   ├── known-issues.md      ← Mémoire inter-features (auto)
+│   ├── state.json           ← State machine, compteurs, timeline
+│   ├── tokens.json          ← Coûts, métriques par modèle/phase
 │   └── logs/                ← Logs orchestrateur
-│
-└── project/                 ← Le code produit (son propre repo git)
-    ├── CLAUDE.md            ← Auto-généré et auto-amélioré
-    ├── ROADMAP.md           ← Auto-généré, évolue avec le projet
-    ├── codebase/            ← Carte sémantique du code
-    ├── research/            ← Veille marché
-    ├── .claude/skills/      ← Skills de l'agent
-    └── src/                 ← Code applicatif
+├── src/                     ← Code applicatif
+└── README.md                ← Doc produit
 ```
 
 ## GitHub (optionnel)
@@ -240,7 +263,7 @@ Tout fonctionne en local sans GitHub. Chaque option est indépendante et off par
 ## FAQ
 
 **Le workspace est-il un repo git ?**
-Non. Seul `project/` à l'intérieur a son propre git.
+Oui. Le workspace est directement le repo git du projet.
 
 **Je peux lancer plusieurs projets en parallèle ?**
 Oui. Chaque projet est indépendant. `orc s` les affiche tous.
@@ -259,5 +282,18 @@ Oui. Éditer les fichiers dans `~/projects/mon-projet/phases/`. Chaque phase est
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Documentation technique complète
+### Guides utilisateur (dans `docs/`)
+
+- [Démarrage rapide](docs/getting-started.md) — Installation et premier projet
+- [Modes d'init](docs/init-modes.md) — Wizard, brief + clarification, brief direct, template
+- [Référence CLI](docs/commands-reference.md) — Toutes les commandes avec exemples
+- [Configuration](docs/configuration.md) — Paramètres, modes d'autonomie
+- [Intégration GitHub](docs/github-integration.md) — PRs, tracking, signals, CI, releases
+- [Contrôle humain](docs/human-controls.md) — Pause, stop, notes, feedback
+- [FAQ & Troubleshooting](docs/faq.md) — Questions fréquentes et résolution de problèmes
+
+### Documentation technique
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — Architecture technique complète
 - [ROADMAP.md](ROADMAP.md) — Historique des versions et roadmap d'orc
+- [codebase/INDEX.md](codebase/INDEX.md) — Carte sémantique du code

@@ -1,6 +1,6 @@
 # ORC — Skills templates
 
-Skills copiées dans project/.claude/skills/ au bootstrap. Auto-enrichies par l'IA au fil du projet.
+Skills copiées dans .claude/skills/ au bootstrap depuis orc/skills-templates/. Auto-enrichies par l'IA au fil du projet.
 
 ## implement-feature.md
 Workflow d'implémentation : lire l'index, créer branche, coder, tester, review, commit.

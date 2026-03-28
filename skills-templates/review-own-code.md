@@ -8,14 +8,14 @@ user_invocable: true
 
 Avant chaque commit, vérifier :
 
-### Anti-duplication (consulter codebase/INDEX.md)
-- [ ] Pas de nouvelle utility qui duplique une existante (vérifier codebase/utilities.md)
-- [ ] Pas de nouveau composant qui duplique un existant (vérifier codebase/modules.md)
+### Anti-duplication (consulter .orc/codebase/INDEX.md)
+- [ ] Pas de nouvelle utility qui duplique une existante (vérifier .orc/codebase/utilities.md)
+- [ ] Pas de nouveau composant qui duplique un existant (vérifier .orc/codebase/modules.md)
 - [ ] Les patterns utilisés sont cohérents avec stack-conventions.md
 - [ ] Si une nouvelle utility réutilisable a été créée → la noter pour la phase reflect
 
 ### Correctness
-- [ ] La feature correspond aux critères d'acceptance de la ROADMAP
+- [ ] La feature correspond aux critères d'acceptance de la .orc/ROADMAP.md
 - [ ] Pas de TODO ou code commenté laissé en place
 - [ ] Les edge cases sont gérés
 

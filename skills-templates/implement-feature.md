@@ -6,7 +6,7 @@ user_invocable: true
 
 ## Workflow d'implémentation
 
-1. **Comprendre** — Lis la spec dans ROADMAP.md + les insights research/ pertinents
+1. **Comprendre** — Lis la spec dans .orc/ROADMAP.md + les insights .orc/research/ pertinents
 2. **Explorer** — Lis le code existant lié à cette feature
 3. **Brancher** — `git checkout -b feature/<nom-court>`
 4. **Coder** — Implémente en respectant CLAUDE.md

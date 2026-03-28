@@ -12,7 +12,7 @@ Pour chacun, documente :
 - Ce que les utilisateurs en disent (avis, forums)
 - Ce qui manque / opportunités
 
-Utilise les concurrents listés dans BRIEF.md comme point de départ,
+Utilise les concurrents listés dans .orc/BRIEF.md comme point de départ,
 puis en découvre d'autres via WebSearch.
 
 ### 2. Attentes utilisateurs
@@ -36,9 +36,9 @@ Recherche sur Reddit, forums spécialisés, ProductHunt :
 ### Output attendu
 
 Pour chaque section :
-1. Crée un fichier daté dans research/<catégorie>/YYYY-MM-DD-<sujet>.md
-2. Mets à jour research/<catégorie>/SYNTHESIS.md
-3. Mets à jour research/INDEX.md (max 50 lignes, insights clés uniquement)
+1. Crée un fichier daté dans .orc/research/<catégorie>/YYYY-MM-DD-<sujet>.md
+2. Mets à jour .orc/research/<catégorie>/SYNTHESIS.md
+3. Mets à jour .orc/research/INDEX.md (max 50 lignes, insights clés uniquement)
 
 Chaque insight doit se terminer par :
 **Confiance :** `high` | `medium` | `low`

@@ -38,6 +38,6 @@ Vérifier que ARCHITECTURE.md et README.md sont à jour avec :
 ### 6. Dry-run mental
 Parcourir le flow complet mentalement :
 1. Premier lancement (rien n'existe)
-2. Reprise après crash (state.json + project/ existants)
+2. Reprise après crash (state.json existant)
 3. Toutes les features cochées (phase evolve)
 4. Mode nohup (pas de terminal)

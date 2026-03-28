@@ -5,11 +5,11 @@
 # ============================================================
 
 # === PROJET ===
-PROJECT_DIR="./project"                  # Dossier du projet généré
+PROJECT_DIR="."                          # Racine du workspace (= le projet)
 PROJECT_NAME=""                          # Nom du projet (rempli par init.sh)
 
 # === GARDE-FOUS ===
-MAX_FIX_ATTEMPTS=5                       # Tentatives de correction par feature
+MAX_FIX_ATTEMPTS=3                       # Tentatives de correction par feature
 MAX_FEATURES=50                          # Nombre total de features avant arrêt
 MAX_TURNS_PER_INVOCATION=50              # Limite de turns par appel Claude
 
@@ -51,9 +51,9 @@ NOTIFY_COMMAND=""                        # Commande de notification (vide = dés
 
 # === RECHERCHE ===
 ENABLE_RESEARCH=true                     # Activer la veille marché
-MAX_TURNS_RESEARCH_INITIAL=80            # Budget recherche initiale
-MAX_TURNS_RESEARCH_EPIC=40               # Budget veille ciblée par epic
-MAX_TURNS_RESEARCH_TREND=50              # Budget veille tendances (méta-rétro)
+MAX_TURNS_RESEARCH_INITIAL=50            # Budget recherche initiale
+MAX_TURNS_RESEARCH_EPIC=20               # Budget veille ciblée par epic
+MAX_TURNS_RESEARCH_TREND=30              # Budget veille tendances (méta-rétro)
 
 # === TECHNIQUE ===
 BUILD_COMMAND="npm run build"            # Commande de build
@@ -62,14 +62,46 @@ DEV_COMMAND="npm run dev"                # Commande serveur dev
 LINT_COMMAND="npm run lint"              # Commande lint (vide = désactivé)
 QUALITY_COMMAND=""                       # Commande quality gate post-tests (vide = désactivé)
                                          # Ex: "npm run lighthouse -- --budget=80" ou "npx bundle-size-check"
-CLAUDE_MODEL=""                          # Modèle Claude (vide = défaut CLI). Ex: "claude-sonnet-4-6-20250514"
+DEPLOY_COMMAND=""                        # Commande de déploiement (vide = désactivé)
+                                         # Ex: "scripts/deploy.sh" ou "vercel deploy --prod"
+                                         # Exécuté en fin de projet si le run est complet.
+FUNCTIONAL_CHECK_COMMAND=""              # Vérification fonctionnelle post-feature (vide = désactivé)
+                                         # L'app DOIT être fonctionnelle après chaque feature.
+                                         # Ex: "npm start -- --check" ou "curl -sf http://localhost:3000/health"
+                                         # ou "docker compose up -d && sleep 5 && curl -sf localhost:3000 && docker compose down"
+CLAUDE_MODEL=""                          # Modèle principal (implement, fix). Ex: "claude-sonnet-4-6-20250514"
+                                         # Vide = modèle par défaut de la CLI.
+CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger pour phases simples (plan, critic, reflect, research, etc.)
+                                         # Économise ~35-45% du budget total. Vide = utilise CLAUDE_MODEL.
 
 # === BUDGET ===
-MAX_BUDGET_USD=""                        # Budget max en USD (vide = illimité). Ex: "5.00"
+MAX_BUDGET_USD="200.00"                  # Budget max en USD. Garde-fou par défaut. Ajuster selon le projet.
+                                         # Budget prédictif : refuse de lancer si le coût estimé dépasse le restant.
 
 # === TIMEOUTS ===
-CLAUDE_TIMEOUT=1200                      # Timeout par invocation Claude en secondes (0 = illimité)
-                                         # 1200 = 20min. Les phases WebSearch peuvent être longues.
+CLAUDE_TIMEOUT=900                       # Timeout par défaut en secondes (0 = illimité). 900 = 15min.
+                                         # Surchargé par PHASE_TIMEOUTS si défini pour la phase.
+STALL_KILL_THRESHOLD=60                  # Nombre de checks sans données avant kill auto (×5s = durée)
+                                         # 60 = 5min sans données → kill. 0 = désactivé (warning seul).
+# Timeouts par phase (secondes). Les phases non listées utilisent CLAUDE_TIMEOUT.
+# Ajuster selon vos besoins. Commenter pour tout ramener à CLAUDE_TIMEOUT.
+declare -A PHASE_TIMEOUTS=(
+  ["plan"]=120              # 2min  — planification rapide
+  ["critic"]=600            # 10min — review adversariale (modèle principal, 10 turns)
+  ["reflect"]=180           # 3min  — rétrospective feature
+  ["quality"]=180           # 3min  — correction quality gate
+  ["self-improve"]=300      # 5min  — auto-amélioration
+  ["strategy"]=300          # 5min  — génération roadmap
+  ["evolve"]=300            # 5min  — évolution roadmap
+  ["research-initial"]=600  # 10min — recherche web
+  ["research-epic"]=300     # 5min  — veille ciblée
+  ["acceptance"]=300         # 5min  — validation acceptance epic
+  ["tech-debt"]=600          # 10min — refactoring tech-debt
+  ["user-docs"]=300          # 5min  — génération doc utilisateur
+  ["meta-retro"]=600        # 10min — méta-rétrospective
+  ["implement"]=900         # 15min — implémentation
+  ["fix"]=600               # 10min — correction
+)
 
 # === LOGS ===
 LOG_DIR="./.orc/logs"                    # Dossier des logs orchestrateur (dans .orc/)

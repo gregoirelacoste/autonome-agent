@@ -2,14 +2,23 @@
 
 ## Exécution Claude
 
-### run_claude(prompt, max_turns, log_file, phase_name, feature_name)
-Point central — lance Claude CLI en background, monitore le heartbeat, détecte les stalls, enforce le timeout, track les tokens. Injecte le contexte adaptatif selon la phase. Toute modification ici impacte tout le système.
+### run_claude(prompt, max_turns, log_file, phase_name, feature_name, [system_prompt])
+Point central — lance Claude CLI en background, monitore le heartbeat, détecte les stalls, enforce le timeout par phase, track les tokens. Injecte le contexte adaptatif (INDEX.md + auto-map.md pré-lus) selon la phase. Support multi-agent via `--append-system-prompt` optionnel. Apprentissage adaptatif des turns via `adaptive_max_turns()`.
 
 ### render_phase(phase_file, KEY=VALUE...)
 Substitue {{VAR}} dans les prompts. Attention : `${content//pattern/replacement}` casse si replacement contient `/` ou `\`. Pour les outputs build/test, utiliser write_fix_prompt().
 
 ### write_fix_prompt(attempt, max_fix, build_exit, build_output, test_exit, test_output)
 Construit le prompt de fix via fichier temporaire pour éviter les problèmes de caractères spéciaux.
+
+### resolve_model(phase_name)
+Choisit le modèle selon la phase. Retourne CLAUDE_MODEL_LIGHT pour les phases non-code (plan, reflect, research, etc.), CLAUDE_MODEL pour les phases critiques (implement, fix, critic).
+
+### get_model_pricing(model_name)
+Résout le coût input/output par token selon le modèle. Table MODEL_PRICING avec préfixes triés par longueur décroissante. Fallback tarif Sonnet + warning si modèle inconnu.
+
+### adaptive_max_turns(phase_name, default_max)
+Calcule le max_turns optimal basé sur l'historique réel (p75 + 30% marge). Requiert 5+ échantillons valides. Ne dépasse jamais le défaut. Exclut les turns tronqués par max_turns pour éviter le feedback loop.
 
 ## Connaissance projet
 
@@ -19,30 +28,42 @@ Génère codebase/auto-map.md par grep des exports/classes. Multi-stack : TS/JS,
 ### read_human_notes()
 Lit .orc/human-notes.md et retourne le contenu formaté pour injection dans les prompts.
 
+### smart_truncate(text, max_chars)
+Troncation intelligente : garde le début (~1/6) et la fin (~5/6) pour ne pas perdre le message d'erreur initial.
+
 ## Contrôle & monitoring
 
 ### human_pause(reason)
 Pause interactive avec options : c(ontinue), r(oadmap), l(ogs), t(okens), d(iff), s(ummary), f(eedback), n(otes), q(uit). Skippée en mode nohup.
 
 ### check_signals()
-Vérifie les fichiers de signal : .orc/pause-requested, .orc/stop-after-feature, .orc/continue.
+Vérifie les fichiers de signal : .orc/pause-requested, .orc/stop-after-feature, .orc/skip-feature, .orc/continue.
 
 ### notify(message)
 Exécute NOTIFY_COMMAND si configuré.
 
 ### error_hash(output)
-Hash MD5 des 20 premières lignes d'une erreur pour détecter les boucles de fix.
+Extrait les lignes contenant error/fail/exception, supprime les numéros de ligne, trie et hashe. Compare la structure de l'erreur, pas sa position. Fallback sur head -20 si aucune ligne d'erreur.
 
 ## État & persistence
 
-### save_state()
-Sauvegarde feature_count, epic_feature_count, total_failures, evolve_cycles, ai_roadmap_adds dans .orc/state.json.
+### save_state() / restore_state()
+Sauvegarde/restaure tout l'état dans .orc/state.json : compteurs, tracking enrichi, features_timeline, workflow_phase, run_status.
 
-### restore_state()
-Restaure les compteurs depuis .orc/state.json pour reprise après crash.
+### workflow_transition(target_phase)
+Transitions de la state machine avec validation. Phases : init → bootstrap → research → strategy → features ⇄ evolve → post-project → done. Transitions d'urgence : *→crashed/stopped/budget_exceeded. Self-transitions pour la reprise.
 
-### init_tokens() / track_tokens(phase, feature, json) / print_cost_summary()
-Tracking des tokens et coûts dans .orc/tokens.json.
+### update_phase_tracking(phase, feature) / timeline_add() / timeline_update_last()
+Tracking enrichi : feature en cours, phase, timestamps, historique avec status/timing/fix_attempts.
+
+### init_tokens() / track_tokens(phase, feature, json, model, actual_turns) / print_cost_summary()
+Tracking des tokens et coûts dans .orc/tokens.json. Modèle et turns trackés par phase et par invocation.
+
+### migrate_config()
+Migration auto au démarrage. Compare .orc/config.sh avec config.default.sh, ajoute les paramètres manquants. Traitement spécial pour PHASE_TIMEOUTS (declare -A).
+
+### mark_feature_done_bash(feature_name)
+Coche la feature dans ROADMAP.md via sed. Double sécurité avec le cochage par Claude en phase reflect.
 
 ## Helpers
 
@@ -59,4 +80,10 @@ Exécute une commande dans PROJECT_DIR via subshell (pas de cd global).
 Log avec couleurs + append dans orchestrator.log. Niveaux : INFO, WARN, ERROR, PHASE, COST.
 
 ### cleanup()
-Trap EXIT/INT/TERM : kill Claude, save state, rm lock, rm temp files.
+Trap EXIT/INT/TERM : kill Claude, save state, workflow_transition("crashed") si encore running, rm lock, rm temp files.
+
+### run_functional_check(feature_name)
+Exécute FUNCTIONAL_CHECK_COMMAND après chaque merge. Cycle de fix dédié si échec.
+
+### update_changelog()
+Met à jour le changelog du projet en fin de run. Génère un résumé des features implémentées, des métriques (coût, durée, taux de réussite) et du score de maturité.

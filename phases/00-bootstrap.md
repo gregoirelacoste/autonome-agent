@@ -5,7 +5,7 @@ Tu démarres un nouveau projet autonome.
    Intègre les règles et pièges pertinents dans ton CLAUDE.md initial.
    Ne copie pas aveuglément — adapte au contexte de CE projet.
 
-1. Lis BRIEF.md pour comprendre le contexte, la vision et les contraintes.
+1. Lis .orc/BRIEF.md pour comprendre le contexte, la vision et les contraintes.
 
 2. Initialise le projet technique :
    - Structure de dossiers adaptée à la stack demandée
@@ -23,7 +23,7 @@ Tu démarres un nouveau projet autonome.
      à la stack choisie (React, Astro, Java, etc.)
    - Section "## Anti-patterns" avec les erreurs classiques de cette stack
 
-4. Crée le dossier `codebase/` — la mémoire structurée du projet :
+4. Crée le dossier `.orc/codebase/` — la mémoire structurée du projet :
 
    **INDEX.md** — la carte sémantique (TOUJOURS lu, max 40 lignes) :
    ```markdown
@@ -31,32 +31,32 @@ Tu démarres un nouveau projet autonome.
    > Carte sémantique du projet. Lu avant chaque feature.
    > Pour le détail, consulte le fichier indiqué.
 
-   ## Modules (→ codebase/modules.md)
+   ## Modules (→ .orc/codebase/modules.md)
    (sera rempli au fil des features)
 
-   ## Utilities & Helpers (→ codebase/utilities.md)
+   ## Utilities & Helpers (→ .orc/codebase/utilities.md)
    (fonctions réutilisables — NE PAS dupliquer)
 
-   ## External Integrations (→ codebase/integrations.md)
+   ## External Integrations (→ .orc/codebase/integrations.md)
    (APIs, services tiers, SDKs)
 
-   ## Data Models (→ codebase/data-models.md)
+   ## Data Models (→ .orc/codebase/data-models.md)
    (schémas DB, types, interfaces)
 
-   ## Architecture Decisions (→ codebase/architecture.md)
+   ## Architecture Decisions (→ .orc/codebase/architecture.md)
    (choix techniques et justification)
 
-   ## Security Patterns (→ codebase/security.md)
+   ## Security Patterns (→ .orc/codebase/security.md)
    (patterns de sécurité validés pour ce projet)
    ```
 
    **Fichiers de détail** (créés vides, remplis au fil des features) :
-   - `codebase/modules.md` — fonctions, classes, composants par dossier
-   - `codebase/utilities.md` — helpers réutilisables avec signature et chemin
-   - `codebase/integrations.md` — APIs/services intégrés, config, erreurs
-   - `codebase/data-models.md` — schémas DB, types TS, interfaces
-   - `codebase/architecture.md` — décisions prises, justification, alternatives rejetées
-   - `codebase/security.md` — patterns de sécurité adoptés, vérifications faites
+   - `.orc/codebase/modules.md` — fonctions, classes, composants par dossier
+   - `.orc/codebase/utilities.md` — helpers réutilisables avec signature et chemin
+   - `.orc/codebase/integrations.md` — APIs/services intégrés, config, erreurs
+   - `.orc/codebase/data-models.md` — schémas DB, types TS, interfaces
+   - `.orc/codebase/architecture.md` — décisions prises, justification, alternatives rejetées
+   - `.orc/codebase/security.md` — patterns de sécurité adoptés, vérifications faites
 
    **Règle clé** : l'INDEX.md reste COMPACT (max 40 lignes).
    Chaque section indique le fichier de détail + un résumé d'une phrase.
@@ -69,7 +69,7 @@ Tu démarres un nouveau projet autonome.
    - review-own-code.md (auto-review avant commit)
    - stack-conventions.md (rempli avec les conventions de la stack choisie)
 
-6. Crée un ROADMAP.md initial vide (sera rempli après la recherche) :
+6. Crée un .orc/ROADMAP.md initial vide (sera rempli après la recherche) :
    ```
    # Roadmap
    > Sera structurée après la phase de recherche initiale.
@@ -82,4 +82,24 @@ Tu démarres un nouveau projet autonome.
    - Si Python/Django : models, views, serializers, middleware
    - Adapte au contexte du BRIEF, pas de conventions génériques inutiles
 
-8. Commite : "chore: bootstrap project structure"
+8. Crée un dossier `scripts/` avec des utilitaires adaptés à la stack :
+   - `scripts/dev.sh` — lance le serveur dev avec rechargement auto
+   - `scripts/test.sh` — lance les tests avec options utiles (watch, coverage, filtre)
+   - `scripts/setup.sh` — installe les dépendances + configure l'env
+   Adapte selon la stack. Chaque script doit être exécutable (`chmod +x`).
+   Ne crée pas de scripts inutiles — uniquement ceux qui accélèrent le dev.
+
+9. Gestion de l'environnement :
+   - Crée un `.env.example` avec toutes les variables d'environnement nécessaires
+     (clés API, URLs de service, secrets) avec des valeurs placeholder
+   - Documente chaque variable avec un commentaire
+   - Si la stack utilise une base de données, prévois un script de seed
+     (`scripts/seed.sh` ou via la commande de la stack : `npx prisma db seed`, etc.)
+
+10. Crée un pipeline CI basique adapté à la stack :
+    - `.github/workflows/ci.yml` si GitHub est probable
+    - Étapes : install → lint → build → test
+    - Adapte selon la stack (npm, pip, gradle, go, etc.)
+    - Garde le pipeline simple (pas de deploy, juste validation)
+
+11. Commite : "chore: bootstrap project structure"
