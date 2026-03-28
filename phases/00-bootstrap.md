@@ -96,4 +96,10 @@ Tu démarres un nouveau projet autonome.
    - Si la stack utilise une base de données, prévois un script de seed
      (`scripts/seed.sh` ou via la commande de la stack : `npx prisma db seed`, etc.)
 
-10. Commite : "chore: bootstrap project structure"
+10. Crée un pipeline CI basique adapté à la stack :
+    - `.github/workflows/ci.yml` si GitHub est probable
+    - Étapes : install → lint → build → test
+    - Adapte selon la stack (npm, pip, gradle, go, etc.)
+    - Garde le pipeline simple (pas de deploy, juste validation)
+
+11. Commite : "chore: bootstrap project structure"

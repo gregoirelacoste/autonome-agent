@@ -2892,6 +2892,16 @@ Si les améliorations sont mineures ou ne changent pas la structure, ne modifie 
 fi
 
 # ============================================================
+# DOCUMENTATION UTILISATEUR
+# ============================================================
+
+log PHASE "DOCUMENTATION UTILISATEUR"
+update_phase_tracking "user-docs" ""
+run_claude "$(cat "$SCRIPT_DIR/phases/08-user-docs.md")" 15 "$LOG_DIR/08-user-docs.log" "user-docs" || {
+  log WARN "Génération doc utilisateur échouée — pas grave."
+}
+
+# ============================================================
 # BILAN FINAL
 # ============================================================
 

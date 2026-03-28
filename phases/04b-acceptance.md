@@ -31,6 +31,13 @@ L'epic est terminé. Vérifie que le produit fait ce que le BRIEF demande.
 6. Si des problèmes critiques sont trouvés, corrige-les directement.
    Ne crée PAS de nouvelles features — corrige le code existant.
 
+6. Génère des smoke tests persistants si la stack le permet :
+   - Crée un fichier `tests/smoke.test.*` (adapter l'extension à la stack)
+   - Chaque test vérifie un scénario utilisateur validé dans le rapport
+   - Ces tests s'ajoutent aux tests existants et persistent entre les features
+   - Format : un test par scénario d'acceptance validé
+
 RÈGLES :
 - Max 5 corrections. Les problèmes non critiques vont en backlog.
 - Le critère c'est "l'utilisateur peut faire X", pas "le code est propre".
+- Les smoke tests doivent être simples et stables (pas de tests flaky).

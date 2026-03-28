@@ -1454,6 +1454,135 @@ cmd_roadmap_help() {
 # COMMANDE : help agent
 # ============================================================
 
+# ============================================================
+# COMMANDE : adopt (adopter un projet existant)
+# ============================================================
+
+cmd_adopt() {
+  local source_dir="${1:-}"
+  [ -z "$source_dir" ] && die "Usage : orc agent adopt <chemin-du-projet> [--name nom]"
+
+  # Résoudre le chemin absolu
+  source_dir=$(realpath "$source_dir" 2>/dev/null || echo "$source_dir")
+  [ -d "$source_dir" ] || die "Dossier non trouvé : $source_dir"
+
+  shift
+  local name=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="${2:-}"; shift 2 ;;
+      *) die "Option inconnue : $1" ;;
+    esac
+  done
+
+  # Déduire le nom depuis le dossier si pas fourni
+  [ -z "$name" ] && name=$(basename "$source_dir")
+
+  local dir
+  dir=$(project_dir "$name")
+
+  printf "${BOLD}Adoption du projet '%s' depuis %s${NC}\n\n" "$name" "$source_dir"
+
+  # Si le projet est déjà dans PROJECTS_DIR, travailler sur place
+  # Sinon, copier/déplacer vers PROJECTS_DIR
+  if [ "$source_dir" != "$dir" ]; then
+    if [ -d "$dir" ]; then
+      die "Le projet '$name' existe déjà dans $PROJECTS_DIR"
+    fi
+    # Copier le projet dans PROJECTS_DIR
+    cp -r "$source_dir" "$dir"
+    printf "  ${GREEN}✓${NC} Projet copié dans %s\n" "$dir"
+  fi
+
+  # Créer la structure .orc/ sans toucher au code existant
+  mkdir -p "$dir/.orc/logs" \
+           "$dir/.orc/research/competitors" \
+           "$dir/.orc/research/trends" \
+           "$dir/.orc/research/user-needs" \
+           "$dir/.orc/research/regulations" \
+           "$dir/.orc/codebase"
+
+  # Symlinks vers le template orc
+  ln -sf "$ORC_DIR/orchestrator.sh" "$dir/orchestrator.sh"
+  ln -sf "$ORC_DIR/phases" "$dir/phases"
+
+  # Config
+  [ -f "$dir/.orc/config.sh" ] || cp "$ORC_DIR/config.default.sh" "$dir/.orc/config.sh"
+  sed -i "s/^PROJECT_NAME=\"\"/PROJECT_NAME=\"$name\"/" "$dir/.orc/config.sh" 2>/dev/null || true
+
+  # Skills
+  mkdir -p "$dir/.claude/skills"
+  for skill in "$ORC_DIR/skills-templates/"*.md; do
+    local dest="$dir/.claude/skills/$(basename "$skill")"
+    [ ! -f "$dest" ] && cp "$skill" "$dest"
+  done
+
+  # Git init si pas déjà fait
+  [ -d "$dir/.git" ] || ( cd "$dir" && git init -b main > /dev/null 2>&1 )
+
+  # .gitignore (ajout des entrées orc si absent)
+  if ! grep -q "orchestrator.sh" "$dir/.gitignore" 2>/dev/null; then
+    {
+      echo ""
+      echo "# ORC orchestrateur"
+      echo "orchestrator.sh"
+      echo "phases"
+      echo ".orc/logs/"
+      echo ".orc/state.json"
+      echo ".orc/tokens.json"
+      echo ".orc/.lock"
+      echo ".orc/.pid"
+    } >> "$dir/.gitignore"
+  fi
+
+  printf "  ${GREEN}✓${NC} Structure .orc/ créée\n"
+
+  # Demander à Claude d'analyser le code existant et générer la connaissance projet
+  printf "\n  ${CYAN}Claude analyse le code existant...${NC}\n\n"
+
+  ( cd "$dir" && claude -p "Tu adoptes un projet EXISTANT. Du code est déjà présent.
+
+1. Analyse tout le code source du projet (ls, read les fichiers clés)
+2. Identifie : la stack, la structure, les commandes (build, test, dev, lint)
+3. Crée CLAUDE.md avec l'architecture, les conventions, les commandes
+4. Crée .orc/codebase/INDEX.md (carte sémantique, max 40 lignes)
+5. Crée les fichiers de détail : .orc/codebase/modules.md, utilities.md, architecture.md
+6. Crée .claude/skills/stack-conventions.md avec les conventions détectées
+7. Détecte les commandes build/test/dev/lint et mets-les dans .orc/config.sh :
+   - Remplace BUILD_COMMAND, TEST_COMMAND, DEV_COMMAND, LINT_COMMAND
+8. Si un .env.example existe, note les variables requises
+
+NE MODIFIE PAS le code existant. Uniquement créer la connaissance projet.
+Commite : 'chore: adopt project with ORC'" \
+    --dangerously-skip-permissions \
+    --max-turns 30 \
+    --output-format stream-json > /dev/null 2>&1 )
+
+  printf "  ${GREEN}✓${NC} Projet analysé et connaissance générée\n"
+
+  # Générer un brief depuis le code existant
+  if [ ! -f "$dir/BRIEF.md" ] && [ ! -f "$dir/.orc/BRIEF.md" ]; then
+    printf "\n  ${CYAN}Génération du brief depuis le code...${NC}\n\n"
+    ( cd "$dir" && claude -p "Lis CLAUDE.md et le code source. Génère un BRIEF.md qui décrit :
+- Le problème que ce projet résout
+- Les utilisateurs cibles
+- Les fonctionnalités existantes
+- Ce qui reste à faire (si détectable)
+
+Format : utilise le template standard de brief ORC. Sois concis." \
+      --dangerously-skip-permissions \
+      --max-turns 10 \
+      --output-format stream-json > /dev/null 2>&1 )
+    [ -f "$dir/BRIEF.md" ] && cp "$dir/BRIEF.md" "$dir/.orc/BRIEF.md"
+    printf "  ${GREEN}✓${NC} Brief généré\n"
+  fi
+
+  printf "\n${GREEN}Projet '%s' adopté !${NC}\n" "$name"
+  printf "  Démarrer : ${CYAN}orc agent start %s${NC}\n" "$name"
+  printf "  Config   : ${CYAN}vim %s/.orc/config.sh${NC}\n" "$dir"
+  printf "  Status   : ${CYAN}orc agent status %s${NC}\n\n" "$name"
+}
+
 cmd_agent_help() {
   echo ""
   printf "${BOLD}orc agent — Gestion des projets${NC}\n"
@@ -1468,6 +1597,7 @@ cmd_agent_help() {
   printf "  ${CYAN}orc agent dashboard <nom>${NC}         Dashboard live (rafraîchit toutes les 5s)\n"
   printf "  ${CYAN}orc agent logs <nom>${NC}              Logs temps réel\n"
   printf "  ${CYAN}orc agent logs <nom> --full${NC}       Log complet\n"
+  printf "  ${CYAN}orc agent adopt <dossier>${NC}         Adopter un projet existant\n"
   printf "  ${CYAN}orc agent update${NC}                  Mettre à jour le template\n"
   echo ""
 }
@@ -1713,6 +1843,7 @@ agent_dispatch() {
     dashboard) cmd_dashboard "$@" ;;
     github)    cmd_github "$@" ;;
     env)       cmd_env "$@" ;;
+    adopt)     cmd_adopt "$@" ;;
     update)    cmd_update ;;
     help|-h|--help) cmd_agent_help ;;
     *) die "Commande inconnue : agent $subcmd. Voir : orc agent help" ;;
