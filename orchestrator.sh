@@ -445,6 +445,7 @@ track_tokens() {
   local phase="$1"
   local feature="${2:-}"
   local json_output="$3"
+  local model="${4:-unknown}"
 
   if ! command -v jq &> /dev/null; then
     return 0
@@ -490,6 +491,7 @@ track_tokens() {
     --arg phase "$phase" \
     --arg feature "$feature" \
     --arg ts "$timestamp" \
+    --arg model "$model" \
     '
     .total_input_tokens = $total_in |
     .total_output_tokens = $total_out |
@@ -499,6 +501,7 @@ track_tokens() {
     .by_phase[$phase].output_tokens = ((.by_phase[$phase].output_tokens // 0) + $output) |
     .by_phase[$phase].cost_usd = ((.by_phase[$phase].cost_usd // 0) + $cost) |
     .by_phase[$phase].calls = ((.by_phase[$phase].calls // 0) + 1) |
+    .by_phase[$phase].model = $model |
     (if $feature != "" then
       .by_feature[$feature].input_tokens = ((.by_feature[$feature].input_tokens // 0) + $input) |
       .by_feature[$feature].output_tokens = ((.by_feature[$feature].output_tokens // 0) + $output) |
@@ -508,6 +511,7 @@ track_tokens() {
       "timestamp": $ts,
       "phase": $phase,
       "feature": $feature,
+      "model": $model,
       "input_tokens": $input,
       "output_tokens": $output,
       "cost_usd": $cost
@@ -680,6 +684,11 @@ $prompt"
 
   TMP_JSON=$(mktemp)
 
+  # Note: CLAUDE.md est lu automatiquement par Claude Code via -d "$PROJECT_DIR"
+  # Le prompt caching Anthropic cache les préfixes côté serveur automatiquement.
+  # L'injection directe de INDEX.md + auto-map.md dans context_hint est le meilleur
+  # compromis : pas de tool call overhead, et le contenu change entre les features.
+
   # shellcheck disable=SC2086
   claude -p "$full_prompt" \
     --dangerously-skip-permissions \
@@ -801,7 +810,7 @@ $prompt"
     fi
   fi
 
-  track_tokens "$phase_name" "$feature_name" "$json_output"
+  track_tokens "$phase_name" "$feature_name" "$json_output" "$effective_model"
 
   if [ -n "${MAX_BUDGET_USD:-}" ]; then
     local over_budget

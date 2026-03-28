@@ -66,12 +66,14 @@ FUNCTIONAL_CHECK_COMMAND=""              # Vérification fonctionnelle post-feat
                                          # L'app DOIT être fonctionnelle après chaque feature.
                                          # Ex: "npm start -- --check" ou "curl -sf http://localhost:3000/health"
                                          # ou "docker compose up -d && sleep 5 && curl -sf localhost:3000 && docker compose down"
-CLAUDE_MODEL=""                          # Modèle principal (implement, strategy, fix). Ex: "claude-sonnet-4-6-20250514"
-CLAUDE_MODEL_LIGHT=""                    # Modèle léger pour phases simples (reflection, reflect, self-improve)
-                                         # Ex: "claude-haiku-4-5-20251001". Vide = utilise CLAUDE_MODEL.
+CLAUDE_MODEL=""                          # Modèle principal (implement, fix). Ex: "claude-sonnet-4-6-20250514"
+                                         # Vide = modèle par défaut de la CLI.
+CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger pour phases simples (plan, critic, reflect, research, etc.)
+                                         # Économise ~35-45% du budget total. Vide = utilise CLAUDE_MODEL.
 
 # === BUDGET ===
-MAX_BUDGET_USD=""                        # Budget max en USD (vide = illimité). Ex: "5.00"
+MAX_BUDGET_USD="200.00"                  # Budget max en USD. Garde-fou par défaut. Ajuster selon le projet.
+                                         # Budget prédictif : refuse de lancer si le coût estimé dépasse le restant.
 
 # === TIMEOUTS ===
 CLAUDE_TIMEOUT=900                       # Timeout par défaut en secondes (0 = illimité). 900 = 15min.
@@ -79,18 +81,21 @@ CLAUDE_TIMEOUT=900                       # Timeout par défaut en secondes (0 = 
 STALL_KILL_THRESHOLD=60                  # Nombre de checks sans données avant kill auto (×5s = durée)
                                          # 60 = 5min sans données → kill. 0 = désactivé (warning seul).
 # Timeouts par phase (secondes). Les phases non listées utilisent CLAUDE_TIMEOUT.
-# Décommentez et ajustez selon vos besoins.
-# declare -A PHASE_TIMEOUTS=(
-#   ["plan"]=120          # 2min  — planification rapide
-#   ["reflection"]=120    # 2min  — réflexion structurée
-#   ["reflect"]=180       # 3min  — rétrospective feature
-#   ["quality"]=180       # 3min  — correction quality gate
-#   ["strategy"]=300      # 5min  — génération roadmap
-#   ["research-initial"]=600   # 10min — recherche web
-#   ["research-epic"]=300      # 5min  — veille ciblée
-#   ["implement"]=900     # 15min — implémentation
-#   ["fix"]=600           # 10min — correction
-# )
+# Ajuster selon vos besoins. Commenter pour tout ramener à CLAUDE_TIMEOUT.
+declare -A PHASE_TIMEOUTS=(
+  ["plan"]=120              # 2min  — planification rapide
+  ["critic"]=180            # 3min  — review adversariale
+  ["reflect"]=180           # 3min  — rétrospective feature
+  ["quality"]=180           # 3min  — correction quality gate
+  ["self-improve"]=300      # 5min  — auto-amélioration
+  ["strategy"]=300          # 5min  — génération roadmap
+  ["evolve"]=300            # 5min  — évolution roadmap
+  ["research-initial"]=600  # 10min — recherche web
+  ["research-epic"]=300     # 5min  — veille ciblée
+  ["meta-retro"]=600        # 10min — méta-rétrospective
+  ["implement"]=900         # 15min — implémentation
+  ["fix"]=600               # 10min — correction
+)
 
 # === LOGS ===
 LOG_DIR="./.orc/logs"                    # Dossier des logs orchestrateur (dans .orc/)
