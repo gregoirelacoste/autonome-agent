@@ -1470,7 +1470,7 @@ cmd_adopt() {
   local name=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="${2:-}"; shift 2 ;;
+      --name) [ -z "${2:-}" ] && die "--name requiert une valeur"; name="$2"; shift 2 ;;
       *) die "Option inconnue : $1" ;;
     esac
   done
@@ -1489,8 +1489,14 @@ cmd_adopt() {
     if [ -d "$dir" ]; then
       die "Le projet '$name' existe déjà dans $PROJECTS_DIR"
     fi
-    # Copier le projet dans PROJECTS_DIR
-    cp -r "$source_dir" "$dir"
+    # Copier le projet dans PROJECTS_DIR (exclut les dossiers volumineux)
+    if command -v rsync &>/dev/null; then
+      rsync -a --exclude='node_modules' --exclude='.git' --exclude='venv' \
+        --exclude='__pycache__' --exclude='target' --exclude='.next' \
+        --exclude='dist' --exclude='build' "$source_dir/" "$dir/"
+    else
+      cp -r "$source_dir" "$dir"
+    fi
     printf "  ${GREEN}✓${NC} Projet copié dans %s\n" "$dir"
   fi
 
@@ -1508,14 +1514,16 @@ cmd_adopt() {
 
   # Config
   [ -f "$dir/.orc/config.sh" ] || cp "$ORC_DIR/config.default.sh" "$dir/.orc/config.sh"
-  sed -i "s/^PROJECT_NAME=\"\"/PROJECT_NAME=\"$name\"/" "$dir/.orc/config.sh" 2>/dev/null || true
+  # sed -i portable (GNU vs BSD)
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' "s/^PROJECT_NAME=\"\"/PROJECT_NAME=\"$name\"/" "$dir/.orc/config.sh" 2>/dev/null || true
+  else
+    sed -i "s/^PROJECT_NAME=\"\"/PROJECT_NAME=\"$name\"/" "$dir/.orc/config.sh" 2>/dev/null || true
+  fi
 
   # Skills
   mkdir -p "$dir/.claude/skills"
-  for skill in "$ORC_DIR/skills-templates/"*.md; do
-    local dest="$dir/.claude/skills/$(basename "$skill")"
-    [ ! -f "$dest" ] && cp "$skill" "$dest"
-  done
+  cp -n "$ORC_DIR/skills-templates/"*.md "$dir/.claude/skills/" 2>/dev/null || true
 
   # Git init si pas déjà fait
   [ -d "$dir/.git" ] || ( cd "$dir" && git init -b main > /dev/null 2>&1 )
@@ -1540,7 +1548,7 @@ cmd_adopt() {
   # Demander à Claude d'analyser le code existant et générer la connaissance projet
   printf "\n  ${CYAN}Claude analyse le code existant...${NC}\n\n"
 
-  ( cd "$dir" && claude -p "Tu adoptes un projet EXISTANT. Du code est déjà présent.
+  if ( cd "$dir" && claude -p "Tu adoptes un projet EXISTANT. Du code est déjà présent.
 
 1. Analyse tout le code source du projet (ls, read les fichiers clés)
 2. Identifie : la stack, la structure, les commandes (build, test, dev, lint)
@@ -1555,15 +1563,17 @@ cmd_adopt() {
 NE MODIFIE PAS le code existant. Uniquement créer la connaissance projet.
 Commite : 'chore: adopt project with ORC'" \
     --dangerously-skip-permissions \
-    --max-turns 30 \
-    --output-format stream-json > /dev/null 2>&1 )
-
-  printf "  ${GREEN}✓${NC} Projet analysé et connaissance générée\n"
+    --max-turns 20 \
+    --output-format stream-json > /dev/null 2>&1 ); then
+    printf "  ${GREEN}✓${NC} Projet analysé et connaissance générée\n"
+  else
+    printf "  ${YELLOW}⚠${NC} L'analyse automatique a échoué. Relancez avec : orc agent start %s\n" "$name"
+  fi
 
   # Générer un brief depuis le code existant
   if [ ! -f "$dir/BRIEF.md" ] && [ ! -f "$dir/.orc/BRIEF.md" ]; then
     printf "\n  ${CYAN}Génération du brief depuis le code...${NC}\n\n"
-    ( cd "$dir" && claude -p "Lis CLAUDE.md et le code source. Génère un BRIEF.md qui décrit :
+    if ( cd "$dir" && claude -p "Lis CLAUDE.md et le code source. Génère un BRIEF.md qui décrit :
 - Le problème que ce projet résout
 - Les utilisateurs cibles
 - Les fonctionnalités existantes
@@ -1572,9 +1582,12 @@ Commite : 'chore: adopt project with ORC'" \
 Format : utilise le template standard de brief ORC. Sois concis." \
       --dangerously-skip-permissions \
       --max-turns 10 \
-      --output-format stream-json > /dev/null 2>&1 )
-    [ -f "$dir/BRIEF.md" ] && cp "$dir/BRIEF.md" "$dir/.orc/BRIEF.md"
-    printf "  ${GREEN}✓${NC} Brief généré\n"
+      --output-format stream-json > /dev/null 2>&1 ); then
+      [ -f "$dir/BRIEF.md" ] && cp "$dir/BRIEF.md" "$dir/.orc/BRIEF.md"
+      printf "  ${GREEN}✓${NC} Brief généré\n"
+    else
+      printf "  ${YELLOW}⚠${NC} Génération du brief échouée. Créez BRIEF.md manuellement.\n"
+    fi
   fi
 
   printf "\n${GREEN}Projet '%s' adopté !${NC}\n" "$name"

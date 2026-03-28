@@ -138,7 +138,7 @@ get_model_pricing() {
 # Phases légères qui utilisent CLAUDE_MODEL_LIGHT si disponible
 # Phases non-code : pas besoin du modèle principal (text, recherche web, décision)
 # Phases légères (modèle léger). Critic + tech-debt utilisent le modèle PRINCIPAL
-LIGHT_PHASES="plan acceptance reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve"
+LIGHT_PHASES="plan acceptance reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve user-docs"
 
 # Résoudre le modèle effectif pour une phase donnée
 # Usage: resolve_model "reflection" → affiche le modèle à utiliser

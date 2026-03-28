@@ -97,6 +97,7 @@ declare -A PHASE_TIMEOUTS=(
   ["research-epic"]=300     # 5min  — veille ciblée
   ["acceptance"]=300         # 5min  — validation acceptance epic
   ["tech-debt"]=600          # 10min — refactoring tech-debt
+  ["user-docs"]=300          # 5min  — génération doc utilisateur
   ["meta-retro"]=600        # 10min — méta-rétrospective
   ["implement"]=900         # 15min — implémentation
   ["fix"]=600               # 10min — correction
