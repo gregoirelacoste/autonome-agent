@@ -65,6 +65,9 @@ QUALITY_COMMAND=""                       # Commande quality gate post-tests (vid
 DEPLOY_COMMAND=""                        # Commande de déploiement (vide = désactivé)
                                          # Ex: "scripts/deploy.sh" ou "vercel deploy --prod"
                                          # Exécuté en fin de projet si le run est complet.
+COVERAGE_COMMAND=""                      # Commande de couverture de tests (vide = désactivé)
+                                         # Ex: "npx vitest run --coverage --reporter=json" ou "pytest --cov --cov-report=term"
+                                         # Doit afficher un % de couverture dans son output.
 FUNCTIONAL_CHECK_COMMAND=""              # Vérification fonctionnelle post-feature (vide = désactivé)
                                          # L'app DOIT être fonctionnelle après chaque feature.
                                          # Ex: "npm start -- --check" ou "curl -sf http://localhost:3000/health"

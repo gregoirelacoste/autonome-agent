@@ -2420,15 +2420,21 @@ Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/s
     fi
   fi
 
-  # --- Review adversariale (multi-agent : persona destructif, distinct du coder) ---
-  update_phase_tracking "critic" "$feature_name"
-  log INFO "Review adversariale en cours..."
-  critic_prompt=$(render_phase "03b-critic.md" "FEATURE_NAME=$feature_name")
-  # System prompt adversarial : persona distinct du coder
-  local critic_system='Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'\''as PAS écrit ce code — un autre développeur l'\''a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel.'
-  run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" "$critic_system" || {
-    log WARN "Review adversariale échouée — on continue."
-  }
+  # --- Review adversariale (conditionnelle : skip si changement trivial) ---
+  local changed_files_count
+  changed_files_count=$(run_in_project "git diff --name-only main 2>/dev/null | wc -l" || echo "0")
+
+  if [ "$changed_files_count" -ge 3 ]; then
+    update_phase_tracking "critic" "$feature_name"
+    log INFO "Review adversariale en cours ($changed_files_count fichiers modifiés)..."
+    critic_prompt=$(render_phase "03b-critic.md" "FEATURE_NAME=$feature_name")
+    local critic_system='Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'\''as PAS écrit ce code — un autre développeur l'\''a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel.'
+    run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" "$critic_system" || {
+      log WARN "Review adversariale échouée — on continue."
+    }
+  else
+    log INFO "Review adversariale skippée ($changed_files_count fichiers — changement trivial)."
+  fi
 
   # --- Test & Fix Loop (avec détection de boucle) ---
   update_phase_tracking "test-fix" "$feature_name"
@@ -2562,6 +2568,32 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
         echo ""
       } >> "$known_issues"
       log INFO "Problème résolu mémorisé dans known-issues.md"
+    fi
+  fi
+
+  # --- Couverture de tests (tracking + alerte si baisse) ---
+  if [ "$tests_passed" = true ] && [ -n "${COVERAGE_COMMAND:-}" ]; then
+    log INFO "Couverture de tests en cours..."
+    local cov_output cov_exit cov_percent prev_cov
+    cov_output=$(run_in_project "$COVERAGE_COMMAND 2>&1") && cov_exit=0 || cov_exit=$?
+    # Extraire le % de couverture (cherche le pattern XX.X% ou XX%)
+    cov_percent=$(echo "$cov_output" | grep -oP '\d+\.?\d*%' | tail -1 | tr -d '%' || echo "")
+    if [ -n "$cov_percent" ]; then
+      log INFO "Couverture : ${cov_percent}%"
+      # Tracker dans state.json
+      if command -v jq &>/dev/null && [ -f "$STATE_FILE" ]; then
+        prev_cov=$(jq -r '.coverage_percent // ""' "$STATE_FILE" 2>/dev/null)
+        jq --arg cov "$cov_percent" '.coverage_percent = $cov' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+        # Alerte si baisse significative (> 5%)
+        if [ -n "$prev_cov" ] && [ "$prev_cov" != "null" ]; then
+          local drop
+          drop=$(awk "BEGIN {d = $prev_cov - $cov_percent; printf \"%.0f\", d}")
+          if [ "$drop" -gt 5 ] 2>/dev/null; then
+            log WARN "Couverture en baisse : ${prev_cov}% → ${cov_percent}% (-${drop}%)"
+            notify "Couverture en baisse : ${prev_cov}% → ${cov_percent}%"
+          fi
+        fi
+      fi
     fi
   fi
 
@@ -2705,6 +2737,13 @@ COMMANDE DEV SERVER : ${DEV_COMMAND:-npm run dev}"
     run_claude "$acceptance_prompt" 20 "$LOG_DIR/acceptance-epic-$epic_number.log" "acceptance" "epic-$epic_number" || {
       log WARN "Acceptance échouée — on continue."
     }
+
+    # Mise à jour incrémentale du README (quick, modèle léger)
+    run_claude "Mets à jour le README.md du projet pour refléter les features de l'Epic $epic_number.
+Lis .orc/ROADMAP.md pour voir les features cochées. Lis le README actuel.
+Ajoute/mets à jour la section 'Features' avec les fonctionnalités implémentées.
+Garde le README concis et à jour. Ne réécris pas tout — édite seulement ce qui a changé." \
+      5 "$LOG_DIR/readme-update-epic-$epic_number.log" "reflect" "epic-$epic_number" || true
 
     EPIC_FEATURE_COUNT=0
   fi
