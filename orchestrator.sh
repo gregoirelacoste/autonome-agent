@@ -2060,6 +2060,65 @@ init_tokens
 restore_state
 gh_restore_tracking_issue
 
+# === MIGRATION CONFIG AUTO ===
+# Détecte les paramètres manquants dans la config du projet et les ajoute
+# avec les valeurs par défaut. Permet aux projets existants de bénéficier
+# des nouvelles options sans intervention humaine.
+migrate_config() {
+  local project_config="$SCRIPT_DIR/.orc/config.sh"
+  [ -f "$project_config" ] || return 0
+
+  # Résoudre le chemin du template orc (via le symlink orchestrator.sh)
+  local orc_dir
+  orc_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")" 2>/dev/null || echo "")
+  local default_config="$orc_dir/config.default.sh"
+  [ -f "$default_config" ] || return 0
+
+  local migrated=0
+
+  # Extraire les paramètres définis dans config.default.sh (VAR=value, pas les commentaires ni declare)
+  while IFS= read -r line; do
+    # Ignorer les lignes vides, commentaires, declare, et sections
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^declare ]] && continue
+    [[ "$line" =~ ^\) ]] && continue
+    [[ "$line" =~ ^\[\" ]] && continue
+
+    # Extraire le nom de la variable
+    local var_name="${line%%=*}"
+    var_name="${var_name#"${var_name%%[![:space:]]*}"}"  # trim leading spaces
+    [[ "$var_name" =~ ^[A-Z_][A-Z_0-9]*$ ]] || continue
+
+    # Vérifier si le paramètre existe dans la config du projet
+    if ! grep -q "^${var_name}=" "$project_config" 2>/dev/null; then
+      # Ajouter le paramètre manquant avec sa valeur par défaut
+      echo "" >> "$project_config"
+      echo "# [migré auto] Nouveau paramètre — voir config.default.sh pour la doc" >> "$project_config"
+      echo "$line" >> "$project_config"
+      migrated=$((migrated + 1))
+      log INFO "Config migrée : $var_name (ajouté avec la valeur par défaut)"
+    fi
+  done < "$default_config"
+
+  # Migrer PHASE_TIMEOUTS (declare -A, traitement spécial)
+  if ! grep -q "PHASE_TIMEOUTS" "$project_config" 2>/dev/null; then
+    if grep -q "declare -A PHASE_TIMEOUTS" "$default_config" 2>/dev/null; then
+      echo "" >> "$project_config"
+      echo "# [migré auto] Timeouts par phase — voir config.default.sh pour la doc" >> "$project_config"
+      sed -n '/^declare -A PHASE_TIMEOUTS/,/^)/p' "$default_config" >> "$project_config"
+      migrated=$((migrated + 1))
+      log INFO "Config migrée : PHASE_TIMEOUTS (ajouté avec les valeurs par défaut)"
+    fi
+  fi
+
+  if [ "$migrated" -gt 0 ]; then
+    log INFO "Migration config : $migrated paramètres ajoutés. Re-source en cours..."
+    source "$project_config"
+  fi
+}
+migrate_config
+
 clear_action_required
 log PHASE "DÉMARRAGE DE L'AGENT AUTONOME"
 log INFO "Config : MAX_FEATURES=$MAX_FEATURES | MAX_FIX=$MAX_FIX_ATTEMPTS | EPIC_SIZE=$EPIC_SIZE"

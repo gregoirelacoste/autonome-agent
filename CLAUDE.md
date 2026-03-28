@@ -129,6 +129,9 @@ Avant chaque invocation, `run_claude()` estime le coût probable (~4000 tokens i
 ### Stall kill auto
 `STALL_KILL_THRESHOLD` (config, défaut 60 = 5min) : kill automatique si Claude ne produit aucune donnée pendant ce seuil. Complète le warning à 2min et le timeout global.
 
+### Migration config auto
+`migrate_config()` s'exécute au démarrage. Compare la config du projet (`.orc/config.sh`) avec `config.default.sh` du template orc. Ajoute automatiquement les paramètres manquants avec leurs valeurs par défaut. Permet aux projets existants de bénéficier des nouvelles options (CLAUDE_MODEL_LIGHT, PHASE_TIMEOUTS, etc.) sans intervention humaine.
+
 ### render_phase()
 Substitue `{{VAR}}` dans les prompts. Attention : la substitution bash `${content//pattern/replacement}` casse si `replacement` contient `/` ou `\`. Pour les outputs build/test, utiliser `write_fix_prompt()` à la place.
 
