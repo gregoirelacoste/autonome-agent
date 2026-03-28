@@ -112,6 +112,7 @@ Skills Claude Code disponibles pour travailler sur orc lui-même :
 - `/release` — process de release : pré-checks, semver (patch/minor/major), tag git, post-release
 - `/add-phase` — ajouter une nouvelle phase au workflow : créer le prompt, intégrer dans orchestrator.sh, documenter, tester la reprise
 - `/stack-conventions` — conventions de stack (template, copié dans les projets générés)
+- `/orc-watch <projet>` — opérateur autonome : surveille un run, diagnostique les erreurs, corrige les bugs orc, relance si crash, note les améliorations en roadmap. Usage continu : `/loop 3m /orc-watch mon-app`
 
 ## Patterns importants
 
