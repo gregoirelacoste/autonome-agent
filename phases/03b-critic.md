@@ -17,7 +17,6 @@ Cherche spécifiquement :
 7. **Tests manquants ou incomplets** — cas critiques non testés
 
 RÈGLES :
-- Ne modifie PAS le code. Écris uniquement tes findings.
-- Si tu trouves des problèmes, corrige-les directement.
+- Si tu trouves des problèmes, corrige-les directement dans le code.
 - Si le code est propre, dis-le en une ligne et arrête.
 - Max 3 corrections. Ne réécris pas tout.

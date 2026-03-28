@@ -73,6 +73,9 @@ workflow_transition() {
   case "$WORKFLOW_PHASE→$target" in
     init→bootstrap|init→research|init→strategy|init→features) valid=true ;;  # premier lancement
     crashed→bootstrap|crashed→research|crashed→strategy|crashed→features) valid=true ;;  # reprise après crash
+    stopped→bootstrap|stopped→research|stopped→strategy|stopped→features) valid=true ;;  # reprise après arrêt
+    budget_exceeded→bootstrap|budget_exceeded→research|budget_exceeded→strategy|budget_exceeded→features) valid=true ;;  # reprise après budget
+    done→bootstrap|done→research|done→strategy|done→features) valid=true ;;  # relancement volontaire
     bootstrap→research|bootstrap→strategy|bootstrap→features) valid=true ;;
     research→strategy|research→features) valid=true ;;
     strategy→features) valid=true ;;
@@ -667,6 +670,7 @@ $prompt"
       log WARN "Budget prédictif : ~\$${est_cost} estimé, \$${remaining} restant — skip phase '$phase_name'"
       log ERROR "Budget insuffisant — arrêt propre du run."
       print_cost_summary
+      workflow_transition "budget_exceeded"
       RUN_STATUS="budget_exceeded"
       RUN_ENDED_AT=$(date -Iseconds)
       save_state
@@ -928,6 +932,7 @@ check_signals() {
     rm -f "$signal_dir/stop-after-feature"
     log INFO "Signal stop-after-feature détecté — arrêt propre après cette feature."
     notify "Arrêt propre demandé — finit la feature en cours."
+    workflow_transition "stopped"
     RUN_STATUS="stopped"
     RUN_ENDED_AT=$(date -Iseconds)
     save_state
@@ -1907,7 +1912,7 @@ FBEOF
         fi
         echo ""
         ;;
-      q|Q) log INFO "Arrêt demandé par l'utilisateur." ; RUN_STATUS="stopped" ; RUN_ENDED_AT=$(date -Iseconds) ; print_cost_summary ; exit 0 ;;
+      q|Q) log INFO "Arrêt demandé par l'utilisateur." ; workflow_transition "stopped" ; RUN_STATUS="stopped" ; RUN_ENDED_AT=$(date -Iseconds) ; print_cost_summary ; exit 0 ;;
       *) echo "Choix invalide." ;;
     esac
   done
