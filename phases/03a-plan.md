@@ -1,9 +1,7 @@
 PLANIFICATION DE LA FEATURE : {{FEATURE_NAME}}
 
-Avant de coder, produis un plan concis. Lis d'abord :
-1. .orc/codebase/INDEX.md (carte sémantique)
-2. .orc/codebase/auto-map.md (exports/classes existants)
-3. La spec de cette feature dans .orc/ROADMAP.md
+Avant de coder, produis un plan concis. Le contexte projet (INDEX.md + auto-map.md) est injecté ci-dessus.
+Lis aussi la spec de cette feature dans .orc/ROADMAP.md.
 
 Puis écris un plan dans .orc/logs/plan-{{N}}.md avec ce format exact :
 

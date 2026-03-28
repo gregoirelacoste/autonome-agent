@@ -527,7 +527,8 @@ run_claude() {
   # (évite les tool calls de lecture qui coûtent ~100 tokens d'overhead chacune)
   local index_content="" automap_content=""
   if [ -f "$PROJECT_DIR/.orc/codebase/INDEX.md" ]; then
-    index_content=$(cat "$PROJECT_DIR/.orc/codebase/INDEX.md" 2>/dev/null || true)
+    # Tronquer à 60 lignes max (convention = 40 lignes, marge de sécurité)
+    index_content=$(head -60 "$PROJECT_DIR/.orc/codebase/INDEX.md" 2>/dev/null || true)
   fi
   if [ -f "$PROJECT_DIR/.orc/codebase/auto-map.md" ]; then
     automap_content=$(cat "$PROJECT_DIR/.orc/codebase/auto-map.md" 2>/dev/null || true)
@@ -652,7 +653,7 @@ $prompt"
   local stall_count=0
   # Timeout par phase (PHASE_TIMEOUTS) ou global (CLAUDE_TIMEOUT)
   local timeout="${CLAUDE_TIMEOUT:-0}"
-  if declare -p PHASE_TIMEOUTS &>/dev/null 2>&1 && [ -n "${PHASE_TIMEOUTS[$phase_name]+x}" ]; then
+  if declare -p PHASE_TIMEOUTS &>/dev/null && [ -n "${PHASE_TIMEOUTS[$phase_name]+x}" ]; then
     timeout="${PHASE_TIMEOUTS[$phase_name]}"
     log INFO "  Timeout: ${timeout}s [phase=$phase_name]"
   fi
@@ -2087,7 +2088,7 @@ EOF
   }
 
   # Injecter le plan dans le prompt d'implémentation s'il existe
-  plan_file="$PROJECT_DIR/.orc/logs/plan-$FEATURE_COUNT.md"
+  local plan_file="$PROJECT_DIR/.orc/logs/plan-$FEATURE_COUNT.md"
 
   # --- Implémentation (avec human notes + feedback + contexte adaptatif) ---
   log INFO "Implémentation en cours..."
@@ -2100,8 +2101,10 @@ EOF
     impl_prompt="$impl_prompt
 
 PLAN VALIDÉ POUR CETTE FEATURE (suis-le, ne réinvente pas l'approche) :
-$(cat "$plan_file")"
+$(head -30 "$plan_file")"
     log INFO "Plan injecté dans le prompt d'implémentation."
+  else
+    log WARN "Plan non trouvé ($plan_file) — implémentation sans plan."
   fi
 
   # Injecter les notes humaines mid-run si présentes
