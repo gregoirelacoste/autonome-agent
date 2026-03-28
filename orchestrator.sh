@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# Bash 4+ requis pour declare -A (associative arrays)
+if ((BASH_VERSINFO[0] < 4)); then
+  echo "ERREUR: bash 4+ requis (actuel: $BASH_VERSION). Sur macOS: brew install bash" >&2
+  exit 1
+fi
+
 # ============================================================
 # Agent Autonome Claude — Orchestrateur principal
 # ============================================================
@@ -72,17 +78,21 @@ DEFAULT_COST_PER_OUTPUT_TOKEN=0.000015
 
 # Résoudre le pricing pour un modèle donné
 # Usage: get_model_pricing "claude-sonnet-4-6-20250514" → set COST_PER_INPUT_TOKEN et COST_PER_OUTPUT_TOKEN
+# Note: itère les préfixes du plus long au plus court pour éviter les matchs ambigus
 get_model_pricing() {
   local model="${1:-}"
   COST_PER_INPUT_TOKEN="$DEFAULT_COST_PER_INPUT_TOKEN"
   COST_PER_OUTPUT_TOKEN="$DEFAULT_COST_PER_OUTPUT_TOKEN"
-  for prefix in "${!MODEL_PRICING[@]}"; do
+  # Trier les préfixes par longueur décroissante (le plus spécifique matche d'abord)
+  local sorted_prefixes
+  sorted_prefixes=$(for p in "${!MODEL_PRICING[@]}"; do echo "$p"; done | awk '{print length, $0}' | sort -rn | cut -d' ' -f2-)
+  while IFS= read -r prefix; do
     if [[ "$model" == "$prefix"* ]]; then
       COST_PER_INPUT_TOKEN="${MODEL_PRICING[$prefix]%%:*}"
       COST_PER_OUTPUT_TOKEN="${MODEL_PRICING[$prefix]##*:}"
       return 0
     fi
-  done
+  done <<< "$sorted_prefixes"
 }
 
 # Phases légères qui utilisent CLAUDE_MODEL_LIGHT si disponible
@@ -483,7 +493,6 @@ run_claude() {
   local feature_name="${5:-}"
 
   local exit_code=0
-  TMP_JSON=$(mktemp)
   local start_time
   start_time=$(date +%s)
 
@@ -548,7 +557,7 @@ $prompt"
   # Résoudre le pricing pour le tracking
   get_model_pricing "$effective_model"
 
-  # Budget prédictif : estimer le coût avant de lancer et refuser si ça dépasse
+  # Budget prédictif : estimer le coût AVANT de lancer (et avant mktemp)
   if [ -n "${MAX_BUDGET_USD:-}" ]; then
     # Estimation conservatrice : ~4000 tokens input + ~2000 output par turn
     local est_input=$(( max_turns * 4000 ))
@@ -561,9 +570,16 @@ $prompt"
     would_exceed=$(awk "BEGIN {print ($TOTAL_COST_USD + $est_cost > $MAX_BUDGET_USD) ? \"yes\" : \"no\"}")
     if [ "$would_exceed" = "yes" ]; then
       log WARN "Budget prédictif : ~\$${est_cost} estimé, \$${remaining} restant — skip phase '$phase_name'"
-      return 1
+      log ERROR "Budget insuffisant — arrêt propre du run."
+      print_cost_summary
+      RUN_STATUS="budget_exceeded"
+      RUN_ENDED_AT=$(date -Iseconds)
+      save_state
+      exit 0
     fi
   fi
+
+  TMP_JSON=$(mktemp)
 
   # shellcheck disable=SC2086
   claude -p "$full_prompt" \
