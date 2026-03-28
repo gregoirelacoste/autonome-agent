@@ -68,6 +68,7 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 - `orc agent new <nom> [--brief x.md] [--no-clarify] [--github [public]]` — créer un projet (wizard, brief+clarification, ou brief direct, optionnel: repo GitHub)
 - `orc agent github <nom> [--public]` — créer le repo GitHub d'un projet existant
 - `orc agent start|stop|status|logs <nom>` — gestion des projets
+- `orc agent logs <nom> --debug` — actions Claude en temps réel (tool calls, texte, erreurs — activé par défaut via `ORC_DEBUG=true`)
 - `orc agent dashboard <nom>` — dashboard live avec progression, roadmap, activité (auto-refresh 5s)
 - `orc roadmap [--detail|--full] [--priority P1] [--tag x]` — suivi roadmap
 - `orc admin config|model|budget|key|version` — administration
@@ -172,6 +173,11 @@ Si `LINT_COMMAND` est défini, exécuté entre implement et la review adversaria
 
 ### Preflight checks (sécurité pré-merge)
 `preflight_merge()` vérifie avant chaque merge : fichiers sensibles (.env, credentials, .pem), suppressions massives (> 500 deletions, ratio > 3:1), fichiers CI/infra modifiés (warning), nombre de fichiers (> 30 = warning). Bloque le merge si fichiers sensibles ou suppressions massives.
+
+### Mode debug (`ORC_DEBUG`)
+`ORC_DEBUG=true` (défaut) écrit `.orc/logs/orc-debug-live.log` en temps réel. Implémenté dans `run_claude()` : en-tête de phase + parsing des events stream-json depuis `$TMP_JSON` toutes les 5s (bash/jq, **zéro token Claude**). Contenu : tool calls (`→ Read/Write/Bash ...`), texte généré (💬), erreurs d'outils (❌). Suivi : `orc logs <nom> --debug`. Cas d'usage principal : laisser une seconde instance de Claude Code surveiller ce log pour diagnostiquer les problèmes en temps réel pendant un run.
+
+Pour diagnostiquer un run en cours sans relancer : lire `.orc/logs/orc-debug-live.log` (actions Claude) + `orchestrator.log` (phases/coûts/erreurs orc) + les logs de phase individuels dans `.orc/logs/feature-N-*.log`.
 
 ### Change reports
 `generate_change_report()` produit un rapport markdown (`logs/change-report-N.md`) avant chaque merge : fichiers modifiés, commits, métriques (lignes ajoutées/supprimées, coût).

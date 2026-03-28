@@ -28,6 +28,16 @@ require_project() {
   [ -d "$dir" ] || die "Projet '$name' non trouvé. Voir : orc agent status"
 }
 
+# Infère le nom du projet depuis le répertoire courant
+# Retourne le nom si cwd == $PROJECTS_DIR/<nom>, sinon retourne 1
+infer_project_from_cwd() {
+  local cwd pdir
+  cwd=$(realpath "$(pwd)" 2>/dev/null) || return 1
+  pdir=$(realpath "$PROJECTS_DIR" 2>/dev/null) || return 1
+  [ "$(dirname "$cwd")" = "$pdir" ] || return 1
+  basename "$cwd"
+}
+
 is_running() {
   local name="$1"
   local dir
@@ -496,9 +506,10 @@ Pose les questions une par une. Écris le résultat dans BRIEF.md." )
 
 cmd_start() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage : orc agent start <nom> [--prompt \"directive\"]"
+  if [ -n "$name" ] && [ "${name#-}" = "$name" ]; then shift
+  else name=$(infer_project_from_cwd) || die "Usage : orc agent start <nom> [--prompt \"directive\"]"
+  fi
   require_project "$name"
-  shift
 
   # Parse options
   local user_prompt=""
@@ -571,7 +582,9 @@ cmd_start() {
 
 cmd_stop() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage : orc agent stop <nom>"
+  if [ -z "$name" ]; then
+    name=$(infer_project_from_cwd) || die "Usage : orc agent stop <nom>"
+  fi
   require_project "$name"
 
   local dir
@@ -611,7 +624,9 @@ cmd_stop() {
 
 cmd_restart() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage : orc agent restart <nom>"
+  if [ -z "$name" ]; then
+    name=$(infer_project_from_cwd) || die "Usage : orc agent restart <nom>"
+  fi
   cmd_stop "$name"
   sleep 1
   cmd_start "$name"
@@ -920,17 +935,55 @@ cmd_status_detail() {
 
 cmd_logs() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage : orc logs <nom> [--full]"
+  if [ -n "$name" ] && [ "${name#-}" = "$name" ]; then shift
+  else name=$(infer_project_from_cwd) || die "Usage : orc logs <nom> [--full|--debug]"
+  fi
   require_project "$name"
 
   local dir
   dir=$(project_dir "$name")
-  local logfile="$dir/.orc/logs/orchestrator.log"
+  local flag="${1:-}"
 
+  if [ "$flag" = "--debug" ]; then
+    # Mode debug : actions Claude en temps réel (stream-json formaté)
+    local debug_log="$dir/.orc/logs/orc-debug-live.log"
+    if [ ! -f "$debug_log" ]; then
+      printf "Pas encore de log debug pour '%s'.\n" "$name"
+      printf "Le fichier est créé au premier appel Claude (après start).\n"
+      exit 0
+    fi
+    printf "${BOLD}Debug live — %s${NC}  ${DIM}(Ctrl+C pour quitter)${NC}\n\n" "$name"
+    if command -v jq &>/dev/null; then
+      # Afficher les dernières lignes déjà formatées, puis suivre en temps réel
+      tail -n +1 -f "$debug_log" | jq -R --unbuffered '. as $raw |
+        try fromjson catch null |
+        if . == null then $raw
+        elif .type == "orc_phase" then
+          "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n[\(.ts)] \(.phase | ascii_upcase) \(if .feature != "" then "| \(.feature)" else "" end)\n     model=\(.model)  turns=\(.max_turns)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        elif .type == "orc_prompt" then
+          "[\(.ts)] prompt \(.chars)c → \(.preview)"
+        elif .type == "assistant" then
+          ([.message.content[]? |
+            if .type == "tool_use" then
+              "  → \(.name) \(.input | to_entries | map("\(.key)=\(.value | tostring | .[0:60])") | join(" "))"
+            elif .type == "text" and (.text | gsub("^[[:space:]]+";"") | length) > 0 then
+              "  💬 \(.text | gsub("^[[:space:]]+";"") | .[0:200] | gsub("\n";" "))"
+            else empty end
+          ] | join("\n"))
+        elif .type == "result" then
+          "  ✅ \(.subtype // "done") | turns=\(.num_turns // "?") | cost=$\(.total_cost_usd // "?")\n"
+        else empty end
+      ' 2>/dev/null
+    else
+      tail -n +1 -f "$debug_log"
+    fi
+    return
+  fi
+
+  local logfile="$dir/.orc/logs/orchestrator.log"
   [ -f "$logfile" ] || die "Pas de log trouvé pour '$name'"
 
-  shift
-  if [ "${1:-}" = "--full" ]; then
+  if [ "$flag" = "--full" ]; then
     less +G "$logfile"
   else
     # Afficher le contexte récent puis suivre en temps réel
@@ -1608,8 +1661,9 @@ cmd_agent_help() {
   printf "  ${CYAN}orc agent status${NC}                  Vue d'ensemble (avec progression)\n"
   printf "  ${CYAN}orc agent status <nom>${NC}            Détail + barre de progression\n"
   printf "  ${CYAN}orc agent dashboard <nom>${NC}         Dashboard live (rafraîchit toutes les 5s)\n"
-  printf "  ${CYAN}orc agent logs <nom>${NC}              Logs temps réel\n"
+  printf "  ${CYAN}orc agent logs <nom>${NC}              Logs temps réel (orchestrateur)\n"
   printf "  ${CYAN}orc agent logs <nom> --full${NC}       Log complet\n"
+  printf "  ${CYAN}orc agent logs <nom> --debug${NC}      Actions Claude en temps réel\n"
   printf "  ${CYAN}orc agent adopt <dossier>${NC}         Adopter un projet existant\n"
   printf "  ${CYAN}orc agent update${NC}                  Mettre à jour le template\n"
   echo ""
@@ -1621,7 +1675,9 @@ cmd_agent_help() {
 
 cmd_dashboard() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage : orc dashboard <nom>"
+  if [ -z "$name" ]; then
+    name=$(infer_project_from_cwd) || die "Usage : orc dashboard <nom>"
+  fi
   require_project "$name"
 
   local dir

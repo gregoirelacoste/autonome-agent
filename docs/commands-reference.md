@@ -80,12 +80,33 @@ orc agent dashboard mon-app --refresh 10  # Refresh toutes les 10s
 
 ### `orc agent logs <nom> [--full]`
 
-Affiche les logs en temps réel (`tail -f`). Avec `--full` : ouvre le log complet dans `less`.
+Affiche les logs orchestrateur en temps réel (`tail -f`). Avec `--full` : ouvre le log complet dans `less`.
+Ces logs contiennent les transitions de phases, coûts, erreurs — mais pas les actions détaillées de Claude.
 
 ```bash
 orc agent logs mon-app         # Temps réel
 orc agent logs mon-app --full  # Historique complet
+orc l mon-app                  # Raccourci
 ```
+
+### `orc agent logs <nom> --debug`
+
+Actions de Claude en temps réel (activé par défaut, **zéro token Claude**).
+
+Contenu du log :
+- En-tête de phase (modèle, max_turns, feature en cours)
+- 50 premières lignes du prompt envoyé (contexte injecté)
+- Actions toutes les ~5s : `→ Read file_path=src/...`, `→ Write`, `→ Bash cmd=...`
+- Texte généré par Claude (raisonnement, commentaires)
+- Erreurs d'outils immédiatement visibles : `❌ ERROR: ...`
+
+```bash
+orc logs mon-app --debug       # tail -f sur orc-debug-live.log
+orc l mon-app --debug          # raccourci
+```
+
+**Cas d'usage : supervision en temps réel**
+Ouvrir une seconde instance de Claude Code avec `orc logs <nom> --debug` pour diagnostiquer et corriger les problèmes pendant qu'orc tourne.
 
 ### `orc agent update`
 

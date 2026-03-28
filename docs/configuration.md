@@ -118,7 +118,26 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 | Paramètre | Défaut | Description |
 |---|---|---|
 | `LOG_DIR` | `./.orc/logs` | Dossier des logs |
-| `VERBOSE` | true | Logs détaillés |
+| `VERBOSE` | true | Affiche l'output final de Claude dans la console |
+| `ORC_DEBUG` | true | Log temps réel des actions Claude (voir ci-dessous) |
+
+#### Mode debug (`ORC_DEBUG`)
+
+Activé par défaut. Écrit dans `.orc/logs/orc-debug-live.log` (append sur tout le run) :
+- En-tête de chaque phase : nom, feature, modèle, max_turns
+- 50 premières lignes du prompt envoyé à Claude (contexte injecté)
+- Actions Claude en temps réel toutes les ~5s : tool calls, texte généré, erreurs d'outils
+
+**N'utilise aucun token Claude** — parsing bash/jq du stream déjà capturé.
+
+```bash
+# Suivre en live (terminal séparé ou autre instance Claude Code)
+orc logs mon-app --debug
+# ou directement :
+tail -f ~/projects/mon-app/.orc/logs/orc-debug-live.log
+```
+
+Cas d'usage typique : ouvrir `orc logs <nom> --debug` dans une seconde instance de Claude Code pour diagnostiquer et corriger les problèmes en temps réel pendant qu'orc tourne.
 
 ### GitHub (optionnel)
 

@@ -23,6 +23,7 @@ Vérifier que toutes les variables utilisées dans orchestrator.sh
 sont définies dans config.default.sh :
 - Grep les `${}` et `$VAR` dans orchestrator.sh
 - Vérifier qu'ils existent dans config.default.sh ou sont définis localement
+- Vérifier que `ORC_DEBUG` est bien dans config.default.sh avec valeur `false` par défaut
 
 ### 4. Cohérence phases
 Vérifier que chaque fichier dans phases/ référencé par orchestrator.sh existe :

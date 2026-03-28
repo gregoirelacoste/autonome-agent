@@ -239,7 +239,8 @@ adaptive_max_turns() {
   # Besoin d'au moins 5 échantillons valides pour adapter
   local count
   count=$(echo "$clean_json" | jq 'length' 2>/dev/null || echo "0")
-  if [ "$count" -lt 5 ]; then
+  count="${count:-0}"
+  if ! [[ "$count" =~ ^[0-9]+$ ]] || [ "$count" -lt 5 ]; then
     echo "$default_max"
     return
   fi
@@ -253,11 +254,14 @@ adaptive_max_turns() {
     ceil |
     if . < 5 then 5 else . end
   ' 2>/dev/null || echo "$default_max")
+  adaptive="${adaptive:-$default_max}"
 
   # Ne jamais dépasser le défaut (garde-fou), ne jamais descendre sous 5
-  if [ "$adaptive" -gt "$default_max" ] 2>/dev/null; then
+  if ! [[ "$adaptive" =~ ^[0-9]+$ ]]; then
     echo "$default_max"
-  elif [ "$adaptive" -lt 5 ] 2>/dev/null; then
+  elif [ "$adaptive" -gt "$default_max" ]; then
+    echo "$default_max"
+  elif [ "$adaptive" -lt 5 ]; then
     echo "5"
   else
     echo "$adaptive"
@@ -769,7 +773,8 @@ run_claude() {
   # Apprentissage adaptatif : ajuster max_turns selon l'historique réel
   local adapted
   adapted=$(adaptive_max_turns "$phase_name" "$max_turns")
-  if [ "$adapted" != "$max_turns" ]; then
+  # Garde-fou : n'utiliser adapted que si c'est un entier valide
+  if [[ "${adapted:-}" =~ ^[0-9]+$ ]] && [ "$adapted" != "$max_turns" ]; then
     log INFO "  Turns adaptatifs: $max_turns → $adapted [phase=$phase_name] (basé sur l'historique)"
     max_turns="$adapted"
   fi
@@ -907,9 +912,44 @@ $prompt"
   fi
   claude_args+=(-d "$PROJECT_DIR")
 
-  claude "${claude_args[@]}" > "$TMP_JSON" 2>&1 &
-
-  CLAUDE_PID=$!
+  # Mode debug : FIFO + tee pour streaming temps réel vers orc-debug-live.log
+  local _tee_pid="" _debug_log=""
+  if [ "${ORC_DEBUG:-false}" = "true" ]; then
+    _debug_log="$LOG_DIR/orc-debug-live.log"
+    # En-tête de phase en JSON (un objet par ligne = parseable par orc logs --debug)
+    local _preview
+    _preview=$(printf '%s' "$full_prompt" | head -3 | tr '\n' ' ' | cut -c1-150)
+    if command -v jq &>/dev/null; then
+      jq -n \
+        --arg phase "$phase_name" --arg feature "${feature_name:-}" \
+        --arg model "${effective_model:-default}" --argjson max_turns "$max_turns" \
+        --arg ts "$(date '+%H:%M:%S')" \
+        '{"type":"orc_phase","phase":$phase,"feature":$feature,"model":$model,"max_turns":$max_turns,"ts":$ts}' \
+        >> "$_debug_log"
+      jq -n \
+        --arg phase "$phase_name" \
+        --argjson chars "${#full_prompt}" \
+        --arg preview "$_preview" \
+        --arg ts "$(date '+%H:%M:%S')" \
+        '{"type":"orc_prompt","phase":$phase,"chars":$chars,"preview":$preview,"ts":$ts}' \
+        >> "$_debug_log"
+    else
+      printf '{"type":"orc_phase","phase":"%s","feature":"%s","ts":"%s"}\n' \
+        "$phase_name" "${feature_name:-}" "$(date '+%H:%M:%S')" >> "$_debug_log"
+    fi
+    # FIFO : claude écrit → tee lit et duplique vers debug_log ET TMP_JSON en temps réel
+    local _debug_fifo
+    _debug_fifo=$(mktemp -u /tmp/orc_dbg_XXXXXX)
+    mkfifo "$_debug_fifo"
+    tee -a "$_debug_log" < "$_debug_fifo" > "$TMP_JSON" &
+    _tee_pid=$!
+    claude "${claude_args[@]}" > "$_debug_fifo" 2>&1 &
+    CLAUDE_PID=$!
+    rm -f "$_debug_fifo"  # supprime le nom, les FDs restent ouverts
+  else
+    claude "${claude_args[@]}" > "$TMP_JSON" 2>&1 &
+    CLAUDE_PID=$!
+  fi
 
   # Monitoring : heartbeat + watchdog stall detection
   local dots=0
@@ -978,6 +1018,11 @@ $prompt"
   if [ -n "$CLAUDE_PID" ]; then
     wait "$CLAUDE_PID" || exit_code=$?
     CLAUDE_PID=""
+  fi
+  # Attendre que tee finisse de flusher TMP_JSON (se termine seul quand Claude ferme le FIFO)
+  if [ -n "$_tee_pid" ]; then
+    wait "$_tee_pid" 2>/dev/null || true
+    _tee_pid=""
   fi
 
   local duration=$(( $(date +%s) - start_time ))
@@ -2329,7 +2374,7 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
   # Injecter les learnings inter-projets directement dans le prompt
   # (au lieu de compter sur Claude pour les lire via tool call)
   if [ -d "$PROJECT_DIR/learnings" ] && compgen -G "$PROJECT_DIR/learnings/*.md" > /dev/null 2>&1; then
-    local learnings_content=""
+    learnings_content=""
     for lf in "$PROJECT_DIR/learnings/"*.md; do
       learnings_content="$learnings_content
 --- $(basename "$lf") ---
@@ -2462,7 +2507,7 @@ EOF
   }
 
   # Injecter le plan dans le prompt d'implémentation s'il existe
-  local plan_file="$PROJECT_DIR/.orc/logs/plan-$FEATURE_COUNT.md"
+  plan_file="$PROJECT_DIR/.orc/logs/plan-$FEATURE_COUNT.md"
 
   # --- Implémentation (avec human notes + feedback + contexte adaptatif) ---
   log INFO "Implémentation en cours..."
@@ -2530,14 +2575,14 @@ Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/s
   fi
 
   # --- Review adversariale (conditionnelle : skip si changement trivial) ---
-  local changed_files_count
+  changed_files_count=""
   changed_files_count=$(run_in_project "git diff --name-only main 2>/dev/null | wc -l" || echo "0")
 
   if [ "$changed_files_count" -ge 3 ]; then
     update_phase_tracking "critic" "$feature_name"
     log INFO "Review adversariale en cours ($changed_files_count fichiers modifiés)..."
     critic_prompt=$(render_phase "03b-critic.md" "FEATURE_NAME=$feature_name")
-    local critic_system='Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'\''as PAS écrit ce code — un autre développeur l'\''a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel.'
+    critic_system='Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'\''as PAS écrit ce code — un autre développeur l'\''a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel.'
     run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" "$critic_system" || {
       log WARN "Review adversariale échouée — on continue."
     }
@@ -2567,9 +2612,9 @@ Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/s
     fi
 
     # Détecter les problèmes d'environnement (vars manquantes, services non configurés)
-    local combined_output="${BUILD_OUTPUT}${TEST_OUTPUT}"
+    combined_output="${BUILD_OUTPUT}${TEST_OUTPUT}"
     if echo "$combined_output" | grep -qiE 'required.*env|env.*required|API.*key.*required|URL.*required|missing.*key|missing.*env|not configured|\.env'; then
-      local missing_vars env_errors proj_name_short
+      missing_vars=""; env_errors=""; proj_name_short=""
       missing_vars=$(echo "$combined_output" | grep -oiE '[A-Z_]{3,}(URL|KEY|SECRET|TOKEN|ID)' | sort -u | head -5 || true)
       env_errors=$(echo "$combined_output" | grep -iE 'required|missing|env|key|url|not configured' | head -5 || true)
       proj_name_short=$(basename "$SCRIPT_DIR")
@@ -2628,7 +2673,7 @@ $(cat "$reflection_file")"
       fi
 
       # Injecter les problèmes connus inter-features (10 dernières entrées max)
-      local known_issues="$PROJECT_DIR/.orc/known-issues.md"
+      known_issues="$PROJECT_DIR/.orc/known-issues.md"
       if [ -f "$known_issues" ]; then
         fix_prompt="$fix_prompt
 
@@ -2665,8 +2710,8 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
     run_in_project "git checkout main 2>/dev/null || true"
   elif [ "$attempt" -gt 0 ]; then
     # Fix réussi après des échecs → mémoriser dans known-issues.md pour les futures features
-    local known_issues="$PROJECT_DIR/.orc/known-issues.md"
-    local reflection_file="$PROJECT_DIR/.orc/logs/fix-reflections-$FEATURE_COUNT.md"
+    known_issues="$PROJECT_DIR/.orc/known-issues.md"
+    reflection_file="$PROJECT_DIR/.orc/logs/fix-reflections-$FEATURE_COUNT.md"
     if [ -f "$reflection_file" ]; then
       {
         echo ""
@@ -2683,7 +2728,7 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
   # --- Couverture de tests (tracking + alerte si baisse) ---
   if [ "$tests_passed" = true ] && [ -n "${COVERAGE_COMMAND:-}" ]; then
     log INFO "Couverture de tests en cours..."
-    local cov_output cov_exit cov_percent prev_cov
+    cov_output=""; cov_exit=0; cov_percent=0; prev_cov=0
     cov_output=$(run_in_project "$COVERAGE_COMMAND 2>&1") && cov_exit=0 || cov_exit=$?
     # Extraire le % de couverture (cherche le pattern XX.X% ou XX%)
     cov_percent=$(echo "$cov_output" | grep -Eo '[0-9]+\.?[0-9]*%' | tail -1 | tr -d '%' || echo "")
@@ -2695,7 +2740,7 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
         jq --arg cov "$cov_percent" '.coverage_percent = $cov' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
         # Alerte si baisse significative (> 5%)
         if [ -n "$prev_cov" ] && [ "$prev_cov" != "null" ]; then
-          local drop
+          drop=0
           drop=$(awk "BEGIN {d = $prev_cov - $cov_percent; printf \"%.0f\", d}")
           if [ "$drop" -gt 5 ] 2>/dev/null; then
             log WARN "Couverture en baisse : ${prev_cov}% → ${cov_percent}% (-${drop}%)"
@@ -2711,9 +2756,9 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
   log INFO "Rétrospective..."
 
   # Métriques bash pré-calculées (évite que Claude perde des turns à les collecter)
-  local files_changed lines_added lines_deleted
+  files_changed=""; lines_added=""; lines_deleted=""
   files_changed=$(run_in_project "git diff --name-only HEAD~1 2>/dev/null | wc -l" || echo "?")
-  local reflect_stat
+  reflect_stat=""
   reflect_stat=$(run_in_project "git diff --stat HEAD~1 2>/dev/null | tail -1" || echo "")
   lines_added=$(echo "$reflect_stat" | awk '{for(i=1;i<=NF;i++) if($i ~ /insertion/) print $(i-1)}')
   lines_deleted=$(echo "$reflect_stat" | awk '{for(i=1;i<=NF;i++) if($i ~ /deletion/) print $(i-1)}')
@@ -2850,13 +2895,13 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
 
   # --- Reset compteur epic + acceptance ---
   if [ "$EPIC_FEATURE_COUNT" -ge "$EPIC_SIZE" ]; then
-    local epic_number=$(( (FEATURE_COUNT - 1) / EPIC_SIZE + 1 ))
+    epic_number=$(( (FEATURE_COUNT - 1) / EPIC_SIZE + 1 ))
     gh_sync_milestone "Epic $epic_number"
 
     # Phase acceptance : valider les user stories de cet epic
     log PHASE "ACCEPTANCE — Epic $epic_number"
     update_phase_tracking "acceptance" "epic-$epic_number"
-    local acceptance_prompt
+    acceptance_prompt=""
     acceptance_prompt=$(render_phase "04b-acceptance.md" \
       "EPIC_NUMBER=$epic_number" \
       "FEATURE_COUNT=$FEATURE_COUNT")
@@ -2893,7 +2938,7 @@ Garde le README concis et à jour. Ne réécris pas tout — édite seulement ce
     if [ "$TOTAL_FAILURES" -gt 0 ] && [ $((TOTAL_FAILURES * 100 / FEATURE_COUNT)) -ge 30 ]; then
       log PHASE "TECH-DEBT — $TOTAL_FAILURES échecs sur $FEATURE_COUNT features (>30%)"
       update_phase_tracking "tech-debt" ""
-      local debt_prompt
+      debt_prompt=""
       debt_prompt=$(render_phase "06b-tech-debt.md" \
         "FEATURE_COUNT=$FEATURE_COUNT" \
         "TOTAL_FAILURES=$TOTAL_FAILURES")

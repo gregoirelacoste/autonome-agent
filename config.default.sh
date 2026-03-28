@@ -111,3 +111,6 @@ declare -A PHASE_TIMEOUTS=(
 # === LOGS ===
 LOG_DIR="./.orc/logs"                    # Dossier des logs orchestrateur (dans .orc/)
 VERBOSE=true                             # Logs détaillés dans la console
+ORC_DEBUG=true                           # Log temps réel des actions Claude dans orc-debug-live.log
+                                         # Tool calls, texte généré, erreurs — zéro token Claude
+                                         # Suivre en live : orc logs <nom> --debug
