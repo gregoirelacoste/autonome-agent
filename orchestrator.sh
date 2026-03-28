@@ -101,7 +101,7 @@ get_model_pricing() {
 
 # Phases légères qui utilisent CLAUDE_MODEL_LIGHT si disponible
 # Phases non-code : pas besoin du modèle principal (text, recherche web, décision)
-LIGHT_PHASES="reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve"
+LIGHT_PHASES="plan reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve"
 
 # Résoudre le modèle effectif pour une phase donnée
 # Usage: resolve_model "reflection" → affiche le modèle à utiliser
@@ -523,43 +523,75 @@ run_claude() {
 
   # Préfixe : forcer Claude à rester dans le répertoire projet
   # + contexte adaptatif : indiquer quels fichiers de connaissance consulter selon la phase
+  # Pré-lire les fichiers de contexte côté bash pour les injecter directement
+  # (évite les tool calls de lecture qui coûtent ~100 tokens d'overhead chacune)
+  local index_content="" automap_content=""
+  if [ -f "$PROJECT_DIR/.orc/codebase/INDEX.md" ]; then
+    # Tronquer à 60 lignes max (convention = 40 lignes, marge de sécurité)
+    index_content=$(head -60 "$PROJECT_DIR/.orc/codebase/INDEX.md" 2>/dev/null || true)
+  fi
+  if [ -f "$PROJECT_DIR/.orc/codebase/auto-map.md" ]; then
+    automap_content=$(cat "$PROJECT_DIR/.orc/codebase/auto-map.md" 2>/dev/null || true)
+  fi
+
   local context_hint=""
   case "$phase_name" in
+    plan)
+      context_hint="
+CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+EXPORTS ET CLASSES (auto-map.md) :
+${automap_content:-[pas encore généré]}"
+      ;;
     implement)
       context_hint="
-CONTEXTE PROJET — Lis dans cet ordre :
-1. .orc/codebase/INDEX.md (carte sémantique — TOUJOURS lire en premier)
-2. .orc/codebase/auto-map.md (carte auto-générée des exports — vérité du code)
-3. Les fichiers de détail .orc/codebase/*.md pertinents pour cette feature (PAS tous)
-4. .claude/skills/stack-conventions.md (conventions à respecter)"
+CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+EXPORTS ET CLASSES (auto-map.md) :
+${automap_content:-[pas encore généré]}
+
+Lis aussi si pertinent pour cette feature :
+- Les fichiers de détail .orc/codebase/*.md (PAS tous — uniquement ceux pertinents)
+- .claude/skills/stack-conventions.md (conventions à respecter)"
       ;;
     fix)
       context_hint="
-CONTEXTE PROJET — Lis si pertinent :
-1. .orc/codebase/auto-map.md (pour localiser les modules impliqués)
-2. .orc/codebase/security.md (si l'erreur est liée à la sécurité)
-3. .claude/skills/fix-tests.md (workflow de correction)"
+EXPORTS ET CLASSES (auto-map.md — pour localiser les modules) :
+${automap_content:-[pas encore généré]}
+
+Lis aussi si pertinent :
+- .orc/codebase/security.md (si l'erreur est liée à la sécurité)
+- .claude/skills/fix-tests.md (workflow de correction)"
       ;;
     strategy)
       context_hint="
-CONTEXTE PROJET — Lis dans cet ordre :
-1. .orc/codebase/INDEX.md (état actuel du projet)
-2. .orc/codebase/architecture.md (décisions techniques en place)
-3. .orc/research/INDEX.md (insights marché)"
+CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+Lis aussi :
+- .orc/codebase/architecture.md (décisions techniques en place)
+- .orc/research/INDEX.md (insights marché)"
       ;;
     reflect)
       context_hint="
-CONTEXTE PROJET — Mets à jour :
-1. .orc/codebase/auto-map.md est déjà à jour (auto-généré) — lis-le pour vérifier
-2. .orc/codebase/INDEX.md + les fichiers de détail impactés par cette feature
-3. .claude/skills/stack-conventions.md si nouveaux patterns"
+EXPORTS ET CLASSES (auto-map.md — vérité du code, auto-généré) :
+${automap_content:-[pas encore généré]}
+
+Mets à jour :
+- .orc/codebase/INDEX.md + les fichiers de détail impactés par cette feature
+- .claude/skills/stack-conventions.md si nouveaux patterns"
       ;;
     meta-retro)
       context_hint="
-CONTEXTE PROJET — Auditer :
-1. .orc/codebase/INDEX.md — est-il à jour vs auto-map.md ?
-2. .orc/codebase/auto-map.md — vérité du code actuel
-3. Tous les fichiers .orc/codebase/*.md — vérifier la cohérence avec le code réel"
+CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+EXPORTS ET CLASSES (auto-map.md) :
+${automap_content:-[pas encore généré]}
+
+Auditer : tous les fichiers .orc/codebase/*.md — vérifier la cohérence avec le code réel"
       ;;
   esac
 
@@ -619,7 +651,12 @@ $prompt"
   local dots=0
   local last_size=0
   local stall_count=0
+  # Timeout par phase (PHASE_TIMEOUTS) ou global (CLAUDE_TIMEOUT)
   local timeout="${CLAUDE_TIMEOUT:-0}"
+  if declare -p PHASE_TIMEOUTS &>/dev/null && [ -n "${PHASE_TIMEOUTS[$phase_name]+x}" ]; then
+    timeout="${PHASE_TIMEOUTS[$phase_name]}"
+    log INFO "  Timeout: ${timeout}s [phase=$phase_name]"
+  fi
 
   while kill -0 "$CLAUDE_PID" 2>/dev/null; do
     dots=$((dots + 1))
@@ -2040,11 +2077,35 @@ EOF
   # --- Auto repo map (avant chaque feature) ---
   generate_repo_map "$PROJECT_DIR"
 
+  # --- Planification rapide (modèle léger, avant implement) ---
+  update_phase_tracking "plan" "$feature_name"
+  log INFO "Planification en cours..."
+  plan_prompt=$(render_phase "03a-plan.md" \
+    "FEATURE_NAME=$feature_name" \
+    "N=$FEATURE_COUNT")
+  run_claude "$plan_prompt" 5 "$LOG_DIR/feature-$FEATURE_COUNT-plan.log" "plan" "$feature_name" || {
+    log WARN "Planification échouée — on continue sans plan."
+  }
+
+  # Injecter le plan dans le prompt d'implémentation s'il existe
+  local plan_file="$PROJECT_DIR/.orc/logs/plan-$FEATURE_COUNT.md"
+
   # --- Implémentation (avec human notes + feedback + contexte adaptatif) ---
   log INFO "Implémentation en cours..."
   impl_prompt=$(render_phase "03-implement.md" \
     "FEATURE_NAME=$feature_name" \
     "FEATURE_BRANCH=$feature_branch")
+
+  # Injecter le plan s'il a été produit
+  if [ -f "$plan_file" ]; then
+    impl_prompt="$impl_prompt
+
+PLAN VALIDÉ POUR CETTE FEATURE (suis-le, ne réinvente pas l'approche) :
+$(head -30 "$plan_file")"
+    log INFO "Plan injecté dans le prompt d'implémentation."
+  else
+    log WARN "Plan non trouvé ($plan_file) — implémentation sans plan."
+  fi
 
   # Injecter les notes humaines mid-run si présentes
   human_notes=$(read_human_notes)

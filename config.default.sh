@@ -74,10 +74,23 @@ CLAUDE_MODEL_LIGHT=""                    # Modèle léger pour phases simples (r
 MAX_BUDGET_USD=""                        # Budget max en USD (vide = illimité). Ex: "5.00"
 
 # === TIMEOUTS ===
-CLAUDE_TIMEOUT=900                       # Timeout par invocation Claude en secondes (0 = illimité)
-                                         # 900 = 15min. Les phases WebSearch peuvent être longues.
+CLAUDE_TIMEOUT=900                       # Timeout par défaut en secondes (0 = illimité). 900 = 15min.
+                                         # Surchargé par PHASE_TIMEOUTS si défini pour la phase.
 STALL_KILL_THRESHOLD=60                  # Nombre de checks sans données avant kill auto (×5s = durée)
                                          # 60 = 5min sans données → kill. 0 = désactivé (warning seul).
+# Timeouts par phase (secondes). Les phases non listées utilisent CLAUDE_TIMEOUT.
+# Décommentez et ajustez selon vos besoins.
+# declare -A PHASE_TIMEOUTS=(
+#   ["plan"]=120          # 2min  — planification rapide
+#   ["reflection"]=120    # 2min  — réflexion structurée
+#   ["reflect"]=180       # 3min  — rétrospective feature
+#   ["quality"]=180       # 3min  — correction quality gate
+#   ["strategy"]=300      # 5min  — génération roadmap
+#   ["research-initial"]=600   # 10min — recherche web
+#   ["research-epic"]=300      # 5min  — veille ciblée
+#   ["implement"]=900     # 15min — implémentation
+#   ["fix"]=600           # 10min — correction
+# )
 
 # === LOGS ===
 LOG_DIR="./.orc/logs"                    # Dossier des logs orchestrateur (dans .orc/)

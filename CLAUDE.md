@@ -188,16 +188,23 @@ Si `LINT_COMMAND` est défini, exécuté entre implement et la boucle test/fix. 
 ### Structure aplatie du workspace
 Le workspace est un repo git unique. `orchestrator.sh` et `phases/` sont des symlinks vers le template orc (mis à jour automatiquement). Les artéfacts orc sont isolés dans `.orc/` (BRIEF, ROADMAP, codebase, research, state, logs). Le code produit (src/, README, etc.) cohabite à la racine.
 
-### Contexte adaptatif par phase
-`run_claude()` injecte un contexte différent selon la phase :
-- implement → .orc/codebase/INDEX.md + auto-map.md + fichiers de détail pertinents + stack-conventions.md
-- fix → .orc/codebase/auto-map.md + security.md + réflexions passées
-- strategy → .orc/codebase/INDEX.md + architecture.md + .orc/research/INDEX.md
-- reflect → .orc/codebase/auto-map.md (vérité) + INDEX.md + fichiers de détail à mettre à jour
-- meta-retro → .orc/codebase/INDEX.md + auto-map.md + audit de cohérence de tous les fichiers
+### Micro-phase plan (avant implement)
+`phases/03a-plan.md` — 5 turns max, modèle léger. Produit `.orc/logs/plan-N.md` (fichiers à modifier, interfaces, tests, risques). Le plan est injecté dans le prompt d'implémentation. Détecte les erreurs de conception AVANT de coder → réduit les cycles de fix.
+
+### Contexte adaptatif par phase (injection directe)
+`run_claude()` pré-lit `INDEX.md` et `auto-map.md` côté bash et les injecte directement dans le prompt (évite les tool calls de lecture à ~100 tokens d'overhead). Contexte par phase :
+- plan → INDEX.md + auto-map.md (injectés)
+- implement → INDEX.md + auto-map.md (injectés) + fichiers de détail pertinents + stack-conventions.md (lus par Claude)
+- fix → auto-map.md (injecté) + security.md + réflexions passées
+- strategy → INDEX.md (injecté) + architecture.md + research/INDEX.md (lus par Claude)
+- reflect → auto-map.md (injecté) + INDEX.md + fichiers de détail à mettre à jour
+- meta-retro → INDEX.md + auto-map.md (injectés) + audit de cohérence
+
+### Timeouts par phase
+`PHASE_TIMEOUTS` (associative array optionnel dans config) surchage `CLAUDE_TIMEOUT` par phase. Permet de limiter les phases légères à 2-3min et les phases lourdes à 10-15min.
 
 ### Réflexions structurées (pattern Reflexion)
-Après chaque échec de fix, l'IA écrit une réflexion structurée dans `.orc/logs/fix-reflections-N.md`. Ces réflexions sont injectées dans les tentatives suivantes.
+Après chaque échec de fix, l'IA écrit une réflexion structurée dans `.orc/logs/fix-reflections-N.md` (intégrée au prompt de fix, pas d'invocation séparée). Les réflexions sont injectées dans les tentatives suivantes.
 
 ## Roadmap
 
