@@ -23,8 +23,8 @@
 - `update` — git pull du template
 
 ## orchestrator.sh — Boucle principale (coeur du système)
-- ~1400 lignes bash
-- Séquence : bootstrap → research → strategy → feature loop → evolve → self-improve
+- ~2900 lignes bash
+- Séquence : bootstrap → research → strategy → feature loop (plan → implement → lint → critic → test/fix → reflect) → evolve
 - Voir codebase/functions.md pour le détail des fonctions
 
 ## init.sh — Wizard de création de projet

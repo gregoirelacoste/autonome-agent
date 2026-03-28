@@ -233,8 +233,9 @@ L'agent améliore ses propres outils au fil du projet :
 │   ├── ROADMAP.md           ← Roadmap features
 │   ├── codebase/            ← Carte sémantique du code
 │   ├── research/            ← Veille marché
-│   ├── state.json           ← Compteurs, reprise après crash
-│   ├── tokens.json          ← Tracking des coûts
+│   ├── known-issues.md      ← Mémoire inter-features (auto)
+│   ├── state.json           ← State machine, compteurs, timeline
+│   ├── tokens.json          ← Coûts, métriques par modèle/phase
 │   └── logs/                ← Logs orchestrateur
 ├── src/                     ← Code applicatif
 └── README.md                ← Doc produit

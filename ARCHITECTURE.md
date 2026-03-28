@@ -303,7 +303,7 @@ Feature 20 : index compact + détail à la demande → contexte minimal, experti
 
 ## Configuration — Intervention humaine
 
-Tout est configurable dans `.orc/config.sh` :
+Tout est configurable dans `.orc/config.sh` (migration auto des nouveaux paramètres via `migrate_config()`) :
 
 ```bash
 # === GARDE-FOUS ===
@@ -313,10 +313,14 @@ MAX_TURNS_PER_INVOCATION=50     # Limite de turns par appel Claude
 
 # === BUDGET ===
 MAX_BUDGET_USD="200.00"         # Budget max en USD (prédictif + post-hoc)
+                                # Prédictif : refuse de lancer si budget insuffisant
+                                # Post-hoc : vérifie après chaque invocation
 
-# === MODÈLES ===
+# === MODÈLES (adaptatifs) ===
 CLAUDE_MODEL=""                 # Modèle principal (implement, fix, critic). Vide = défaut CLI
 CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger (plan, reflect, research)
+                                # resolve_model() choisit automatiquement selon la phase
+                                # MODEL_PRICING[] contient les tarifs par préfixe de modèle
 
 # === RYTHME ===
 META_RETRO_FREQUENCY=5          # Méta-rétrospective toutes les N features
@@ -493,13 +497,89 @@ du même blob global. `run_claude()` injecte un "context hint" selon la phase :
 
 | Phase | Contexte injecté |
 |---|---|
-| **implement** | INDEX.md + auto-map.md + fichiers de détail pertinents + stack-conventions.md |
-| **fix** | auto-map.md + security.md + réflexions passées |
-| **strategy** | INDEX.md + architecture.md + research/INDEX.md |
-| **reflect** | auto-map.md (vérité) + INDEX.md + fichiers de détail à mettre à jour |
-| **meta-retro** | INDEX.md + auto-map.md + audit complet de cohérence |
+| **plan** | INDEX.md + auto-map.md (injectés directement) |
+| **implement** | INDEX.md + auto-map.md (injectés) + fichiers de détail pertinents + stack-conventions.md |
+| **fix** | auto-map.md (injecté) + security.md + réflexions passées + known-issues.md |
+| **strategy** | INDEX.md (injecté) + architecture.md + research/INDEX.md |
+| **reflect** | auto-map.md (injecté) + INDEX.md + fichiers de détail à mettre à jour |
+| **meta-retro** | INDEX.md + auto-map.md (injectés) + audit complet de cohérence |
 
 L'IA charge ~200 tokens de contexte pertinent au lieu de ~2000 tokens de tout.
+
+### State machine (workflow_phase)
+
+`WORKFLOW_PHASE` dans `state.json` pilote le workflow global. Transitions validées
+par `workflow_transition()` :
+
+```
+init → bootstrap → research → strategy → features ⇄ evolve → post-project → done
+                                                   ↘ crashed / stopped / budget_exceeded
+```
+
+Les guards fichier existants (CLAUDE.md, ROADMAP.md, etc.) restent comme filet de
+sécurité. La reprise après crash utilise `WORKFLOW_PHASE` pour savoir exactement où
+reprendre, sans re-scanner tous les fichiers.
+
+### Multi-agent (critic)
+
+Le système utilise deux "agents" distincts au sein du même orchestrateur :
+- **Coder** — Claude avec le system prompt standard du projet (CLAUDE.md + skills)
+- **Critic** — Claude avec `--append-system-prompt` injectant un persona adversarial
+  ("reviewer senior sceptique"). Le critic ne partage pas le contexte du coder.
+
+Ce découplage élimine le biais de confirmation : le critic review le diff sans
+avoir participé à l'implémentation. Modèle principal (pas léger) pour la qualité.
+
+### Budget prédictif + post-hoc
+
+Deux mécanismes complémentaires pour `MAX_BUDGET_USD` (défaut 200$) :
+- **Prédictif** — avant chaque invocation, `run_claude()` estime le coût probable
+  (~4000 tokens input + ~2000 output) et refuse de lancer si le budget serait dépassé.
+- **Post-hoc** — après chaque invocation, le coût réel est ajouté au total et vérifié.
+
+### Pricing dynamique
+
+`MODEL_PRICING` (associative array) contient les tarifs par préfixe de modèle.
+`get_model_pricing()` résout le coût input/output pour le modèle effectif.
+Préfixes triés par longueur décroissante pour match le plus spécifique.
+Fallback sur tarif Sonnet + warning si modèle inconnu.
+
+### Apprentissage adaptatif des turns
+
+`adaptive_max_turns()` calcule le `max_turns` optimal par phase :
+1. Lit l'historique des turns réels dans `tokens.json` (`by_phase.X.turns_history[]`)
+2. Exclut les invocations tronquées par max_turns (feedback loop)
+3. Calcule p75 + 30% marge
+4. Requiert 5+ échantillons valides, ne dépasse jamais le défaut
+
+Résultat : après quelques features, une phase qui utilise ~12 turns ne réserve
+plus 50 turns, ce qui réduit les stalls et améliore le budget prédictif.
+
+### Migration config auto
+
+`migrate_config()` exécutée au démarrage de chaque run. Compare `.orc/config.sh`
+avec `config.default.sh` et ajoute les paramètres manquants (avec commentaire
+"# Added by migrate_config"). Traitement spécial pour `PHASE_TIMEOUTS`
+(`declare -A`). Permet de mettre à jour orc sans recréer les projets.
+
+### Mémoire inter-features (known-issues.md)
+
+`.orc/known-issues.md` est alimenté automatiquement quand un fix réussit après
+des échecs. Contient la réflexion qui a mené au fix (cause racine + solution).
+Injecté dans le prompt de fix des features suivantes pour ne pas répéter les
+mêmes erreurs. Complémentaire aux réflexions structurées (qui sont par-feature).
+
+### Troncation intelligente (smart_truncate)
+
+`smart_truncate(text, max_chars)` garde le début (~1/6) et la fin (~5/6) des logs.
+Utilisé pour les outputs build/test qui peuvent être très longs. Préserve le
+message d'erreur initial (souvent en haut) et le résumé final (en bas).
+
+### Métriques enrichies
+
+`tokens.json` contient désormais par invocation : modèle utilisé, turns réels,
+phase, feature. Permet l'analyse post-run des coûts par modèle et l'apprentissage
+adaptatif des turns.
 
 ---
 
@@ -559,7 +639,7 @@ L'IA charge ~200 tokens de contexte pertinent au lieu de ~2000 tokens de tout.
 
 | Risque | Protection |
 |---|---|
-| Boucle infinie de fix | `MAX_FIX_ATTEMPTS` + détection de boucle (hash erreur) |
+| Boucle infinie de fix | `MAX_FIX_ATTEMPTS` + détection de boucle (`error_hash`) + abandon à 3x même erreur |
 | Roadmap infinie | `MAX_FEATURES` + `MAX_EVOLVE_CYCLES` + DONE.md |
 | IA ajoute trop de features | `MAX_AI_ROADMAP_ADDS` force une pause humaine |
 | CLAUDE.md trop long | Nettoyage forcé à chaque méta-rétro |
@@ -567,40 +647,39 @@ L'IA charge ~200 tokens de contexte pertinent au lieu de ~2000 tokens de tout.
 | Recherche non fiable | Cross-validation + score de confiance |
 | Infos obsolètes | Fichiers datés, élagage > 3 mois |
 | Dérive vs vision | BRIEF.md immuable, vérifié aux méta-rétros + evolve |
-| Coût tokens | `--max-turns` par invocation + `MAX_BUDGET_USD` |
-| Régression qualité | Tests E2E + `QUALITY_COMMAND` optionnel |
+| Coût tokens | Budget prédictif + post-hoc (`MAX_BUDGET_USD`) + `adaptive_max_turns` |
+| Claude bloqué (stall) | `STALL_KILL_THRESHOLD` kill auto après N checks sans données |
+| Régression qualité | Tests E2E + `QUALITY_COMMAND` + `FUNCTIONAL_CHECK_COMMAND` |
 | Auto-modification destructive | Git versionne tout, rollback possible |
 | Hallucination de sources | Règle : URL exacte + cross-validation 2 sources |
 | Absence de l'humain | `PAUSE_EVERY_N_FEATURES` + signaux file-based + notifications |
 | Perte de contexte inter-projets | `learnings/` accumule les apprentissages |
+| Erreurs répétées inter-features | `known-issues.md` injecté dans les prompts de fix |
+| Config obsolète après update | `migrate_config()` ajoute les paramètres manquants |
+| State incohérent après crash | State machine (`workflow_phase`) + guards fichier |
 
 ---
 
 ## Lancement
 
 ```bash
-# Cloner le repo orchestrateur
-git clone git@github.com:gregoirelacoste/orc.git mon-projet
-cd mon-projet
+# Cloner orc (une seule fois)
+git clone git@github.com:gregoirelacoste/orc.git
+cd orc
 
-# Option A : Brief assisté par Claude (recommandé)
-./orchestrator.sh --brief
-# ou avec une idée de départ :
-./orchestrator.sh --brief "un comparateur d'assurances auto pour les jeunes conducteurs"
-
-# Option B : Brief manuel
-cp BRIEF.template.md BRIEF.md
-vim BRIEF.md
+# Créer un projet (workspace séparé dans ~/projects/)
+./orc.sh agent new mon-projet
 
 # Ajuster la config si besoin
-vim config.sh
+vim ~/projects/mon-projet/.orc/config.sh
 
 # Lancer l'agent autonome
-nohup ./orchestrator.sh > logs/orchestrator.log 2>&1 &
+./orc.sh agent start mon-projet
 
 # Surveiller
-tail -f logs/orchestrator.log
-watch -n 30 'grep -c "\[x\]" .orc/ROADMAP.md'
+./orc.sh dash mon-projet          # Dashboard live
+./orc.sh l mon-projet             # Logs temps réel
+./orc.sh s mon-projet             # Status détaillé
 ```
 
 ---

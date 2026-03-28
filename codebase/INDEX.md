@@ -6,13 +6,13 @@
 CLI unifiée (orc.sh → orc-agent.sh / orc-admin.sh) + orchestrateur (orchestrator.sh) + wizard (init.sh).
 
 ## Phases d'orchestration (→ codebase/phases.md)
-8 phases séquentielles : bootstrap → research → strategy → implement → test-fix → reflect → meta-retro → evolve.
+9 phases séquentielles : bootstrap → research → strategy → plan → implement → lint → critic → test-fix → reflect. Plus meta-retro et evolve en boucle externe.
 
 ## Fonctions clés de orchestrator.sh (→ codebase/functions.md)
-run_claude(), render_phase(), generate_repo_map(), error_hash(), check_signals(), notify(), human_pause().
+run_claude(), render_phase(), generate_repo_map(), error_hash(), smart_truncate(), check_signals(), notify(), human_pause(), adaptive_max_turns(), resolve_model(), get_model_pricing(), workflow_transition(), migrate_config(), mark_feature_done_bash().
 
 ## Configuration (→ codebase/config-params.md)
-25+ paramètres dans config.default.sh : garde-fous, rythme, intervention humaine, recherche, technique, budget, notifications.
+38+ paramètres dans config.default.sh : garde-fous, rythme, intervention humaine, recherche, technique, modèles, budget, timeouts, GitHub, notifications.
 
 ## Système de connaissance projet (→ codebase/knowledge-system.md)
 Index sémantique codebase/, auto-map, stack-conventions, learnings inter-projets, réflexions structurées, contexte adaptatif.
