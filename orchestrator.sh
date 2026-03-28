@@ -93,10 +93,15 @@ get_model_pricing() {
       return 0
     fi
   done <<< "$sorted_prefixes"
+  # Aucun préfixe connu n'a matché — warning pour visibilité
+  if [ -n "$model" ]; then
+    log WARN "Modèle '$model' inconnu dans MODEL_PRICING — fallback tarif Sonnet (\$${DEFAULT_COST_PER_INPUT_TOKEN}/\$${DEFAULT_COST_PER_OUTPUT_TOKEN})"
+  fi
 }
 
 # Phases légères qui utilisent CLAUDE_MODEL_LIGHT si disponible
-LIGHT_PHASES="reflection reflect self-improve meta-retro quality"
+# Phases non-code : pas besoin du modèle principal (text, recherche web, décision)
+LIGHT_PHASES="reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve"
 
 # Résoudre le modèle effectif pour une phase donnée
 # Usage: resolve_model "reflection" → affiche le modèle à utiliser
@@ -173,6 +178,24 @@ clear_action_required() {
 }
 
 # === FONCTIONS UTILITAIRES ===
+
+# Troncation intelligente : garde le début et la fin d'un output
+# pour ne pas perdre le message d'erreur initial (souvent en tête)
+# Usage: smart_truncate "$output" 3000  → 500 premiers chars + ... + 2500 derniers chars
+smart_truncate() {
+  local text="$1"
+  local max_chars="${2:-3000}"
+  local len=${#text}
+  if [ "$len" -le "$max_chars" ]; then
+    echo "$text"
+    return
+  fi
+  local head_chars=$(( max_chars / 6 ))       # ~500 chars du début
+  local tail_chars=$(( max_chars - head_chars - 20 ))  # le reste de la fin
+  echo "${text:0:$head_chars}
+... (tronqué: ${len} chars, début+fin conservés) ...
+${text: -$tail_chars}"
+}
 
 log() {
   local level="$1" msg="$2"
@@ -328,7 +351,7 @@ run_functional_check() {
 COMMANDE : $FUNCTIONAL_CHECK_COMMAND
 EXIT CODE : $func_exit
 OUTPUT :
-${func_output: -3000}
+$(smart_truncate "$func_output" 3000)
 
 RÈGLE ABSOLUE : l'application DOIT être fonctionnelle après chaque feature.
 Corrige le problème pour que l'app démarre/fonctionne correctement.
@@ -2084,10 +2107,10 @@ Résoudre :
       run_claude "Tu viens d'essayer de corriger la feature '$feature_name' (tentative $attempt/$MAX_FIX_ATTEMPTS) et ça a échoué.
 
 BUILD (exit $BUILD_EXIT):
-${BUILD_OUTPUT: -1500}
+$(smart_truncate "$BUILD_OUTPUT" 1500)
 
 TESTS (exit $TEST_EXIT):
-${TEST_OUTPUT: -1500}
+$(smart_truncate "$TEST_OUTPUT" 1500)
 
 Écris une RÉFLEXION STRUCTURÉE (3-5 lignes max) dans ce format :
 - **Ce que j'ai tenté :** [description de l'approche]
@@ -2100,8 +2123,8 @@ Ne modifie PAS le code dans cette étape — uniquement la réflexion." \
 
       # Construire le prompt de fix avec les réflexions passées
       fix_prompt=$(write_fix_prompt "$attempt" "$MAX_FIX_ATTEMPTS" \
-        "$BUILD_EXIT" "${BUILD_OUTPUT: -3000}" \
-        "$TEST_EXIT" "${TEST_OUTPUT: -3000}")
+        "$BUILD_EXIT" "$(smart_truncate "$BUILD_OUTPUT" 3000)" \
+        "$TEST_EXIT" "$(smart_truncate "$TEST_OUTPUT" 3000)")
 
       # Injecter les réflexions passées
       if [ -f "$reflection_file" ]; then
@@ -2164,7 +2187,7 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
 COMMANDE : $QUALITY_COMMAND
 EXIT CODE : $quality_exit
 OUTPUT :
-${quality_output: -3000}
+$(smart_truncate "$quality_output" 3000)
 
 Corrige le problème de qualité sans casser les tests existants.
 Exemples de problèmes : performance dégradée, bundle trop gros, couverture insuffisante, score lighthouse en baisse." \

@@ -52,8 +52,8 @@ NOTIFY_COMMAND=""                        # Commande de notification (vide = dés
 # === RECHERCHE ===
 ENABLE_RESEARCH=true                     # Activer la veille marché
 MAX_TURNS_RESEARCH_INITIAL=50            # Budget recherche initiale
-MAX_TURNS_RESEARCH_EPIC=40               # Budget veille ciblée par epic
-MAX_TURNS_RESEARCH_TREND=50              # Budget veille tendances (méta-rétro)
+MAX_TURNS_RESEARCH_EPIC=20               # Budget veille ciblée par epic
+MAX_TURNS_RESEARCH_TREND=30              # Budget veille tendances (méta-rétro)
 
 # === TECHNIQUE ===
 BUILD_COMMAND="npm run build"            # Commande de build
