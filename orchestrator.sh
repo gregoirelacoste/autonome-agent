@@ -2672,9 +2672,23 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
   CURRENT_FEATURE=""
   save_state
 
-  # --- Reset compteur epic ---
+  # --- Reset compteur epic + acceptance ---
   if [ "$EPIC_FEATURE_COUNT" -ge "$EPIC_SIZE" ]; then
-    gh_sync_milestone "Epic $(( (FEATURE_COUNT - 1) / EPIC_SIZE + 1 ))"
+    local epic_number=$(( (FEATURE_COUNT - 1) / EPIC_SIZE + 1 ))
+    gh_sync_milestone "Epic $epic_number"
+
+    # Phase acceptance : valider les user stories de cet epic
+    log PHASE "ACCEPTANCE — Epic $epic_number"
+    update_phase_tracking "acceptance" "epic-$epic_number"
+    local acceptance_prompt
+    acceptance_prompt=$(render_phase "04b-acceptance.md" \
+      "EPIC_NUMBER=$epic_number" \
+      "FEATURE_COUNT=$FEATURE_COUNT" \
+      "DEV_COMMAND=${DEV_COMMAND:-npm run dev}")
+    run_claude "$acceptance_prompt" 15 "$LOG_DIR/acceptance-epic-$epic_number.log" "acceptance" "epic-$epic_number" || {
+      log WARN "Acceptance échouée — on continue."
+    }
+
     EPIC_FEATURE_COUNT=0
   fi
 
@@ -2688,6 +2702,19 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
     log INFO "Méta-rétrospective terminée."
     gh_create_release "v0.$FEATURE_COUNT.0" "Meta-retro après $FEATURE_COUNT features"
     gh_sync_roadmap
+
+    # Phase tech-debt : déclencher si signaux de dette (trop d'échecs)
+    if [ "$TOTAL_FAILURES" -gt 0 ] && [ $((TOTAL_FAILURES * 100 / FEATURE_COUNT)) -ge 30 ]; then
+      log PHASE "TECH-DEBT — $TOTAL_FAILURES échecs sur $FEATURE_COUNT features (>30%)"
+      update_phase_tracking "tech-debt" ""
+      local debt_prompt
+      debt_prompt=$(render_phase "06b-tech-debt.md" \
+        "FEATURE_COUNT=$FEATURE_COUNT" \
+        "TOTAL_FAILURES=$TOTAL_FAILURES")
+      run_claude "$debt_prompt" 20 "$LOG_DIR/tech-debt-$FEATURE_COUNT.log" "tech-debt" || {
+        log WARN "Tech-debt échouée — on continue."
+      }
+    fi
   fi
 
   # --- Pause humaine configurable ---
@@ -2882,6 +2909,23 @@ if [ -n "${FUNCTIONAL_CHECK_COMMAND:-}" ]; then
     notify "ALERTE : App non fonctionnelle en fin de run !"
   fi
   save_state
+fi
+
+# Déploiement automatique si configuré et app fonctionnelle
+if [ -n "${DEPLOY_COMMAND:-}" ] && [ "${LAST_FUNCTIONAL_CHECK:-}" != "false" ]; then
+  log PHASE "DÉPLOIEMENT"
+  log INFO "Commande : $DEPLOY_COMMAND"
+  deploy_output=$(run_in_project "$DEPLOY_COMMAND 2>&1") && deploy_exit=0 || deploy_exit=$?
+  if [ $deploy_exit -eq 0 ]; then
+    log INFO "Déploiement réussi ✓"
+    notify "Déploiement réussi ! Projet $PROJECT_NAME déployé."
+  else
+    log ERROR "Déploiement échoué (exit $deploy_exit)"
+    log ERROR "Output : $(smart_truncate "$deploy_output" 1000)"
+    notify "Déploiement échoué pour $PROJECT_NAME."
+  fi
+elif [ -n "${DEPLOY_COMMAND:-}" ] && [ "${LAST_FUNCTIONAL_CHECK:-}" = "false" ]; then
+  log WARN "Déploiement ignoré — app non fonctionnelle."
 fi
 
 workflow_transition "done"

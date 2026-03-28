@@ -89,4 +89,11 @@ Tu démarres un nouveau projet autonome.
    Adapte selon la stack. Chaque script doit être exécutable (`chmod +x`).
    Ne crée pas de scripts inutiles — uniquement ceux qui accélèrent le dev.
 
-9. Commite : "chore: bootstrap project structure"
+9. Gestion de l'environnement :
+   - Crée un `.env.example` avec toutes les variables d'environnement nécessaires
+     (clés API, URLs de service, secrets) avec des valeurs placeholder
+   - Documente chaque variable avec un commentaire
+   - Si la stack utilise une base de données, prévois un script de seed
+     (`scripts/seed.sh` ou via la commande de la stack : `npx prisma db seed`, etc.)
+
+10. Commite : "chore: bootstrap project structure"

@@ -62,6 +62,9 @@ DEV_COMMAND="npm run dev"                # Commande serveur dev
 LINT_COMMAND="npm run lint"              # Commande lint (vide = désactivé)
 QUALITY_COMMAND=""                       # Commande quality gate post-tests (vide = désactivé)
                                          # Ex: "npm run lighthouse -- --budget=80" ou "npx bundle-size-check"
+DEPLOY_COMMAND=""                        # Commande de déploiement (vide = désactivé)
+                                         # Ex: "scripts/deploy.sh" ou "vercel deploy --prod"
+                                         # Exécuté en fin de projet si le run est complet.
 FUNCTIONAL_CHECK_COMMAND=""              # Vérification fonctionnelle post-feature (vide = désactivé)
                                          # L'app DOIT être fonctionnelle après chaque feature.
                                          # Ex: "npm start -- --check" ou "curl -sf http://localhost:3000/health"
