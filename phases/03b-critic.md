@@ -1,7 +1,5 @@
 REVIEW ADVERSARIALE — Feature : {{FEATURE_NAME}}
 
-Tu es un REVIEWER, pas le développeur. Ton rôle est de trouver les problèmes AVANT les tests.
-
 Lis le diff de la branche courante vs main :
 ```
 git diff main...HEAD
@@ -16,7 +14,6 @@ Cherche spécifiquement :
 6. **Incohérences avec l'existant** — patterns différents du reste du code
 7. **Tests manquants ou incomplets** — cas critiques non testés
 
-RÈGLES :
-- Si tu trouves des problèmes, corrige-les directement dans le code.
-- Si le code est propre, dis-le en une ligne et arrête.
-- Max 3 corrections. Ne réécris pas tout.
+Si tu trouves des problèmes, corrige-les directement dans le code.
+Si le code est propre, dis-le en une ligne et arrête.
+Max 3 corrections. Ne réécris pas tout.

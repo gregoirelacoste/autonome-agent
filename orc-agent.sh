@@ -64,10 +64,11 @@ get_run_status() {
     local saved_status
     saved_status=$(jq -r '.run_status // ""' "$dir/.orc/state.json" 2>/dev/null)
     case "$saved_status" in
-      completed) echo "terminé|$GREEN" ;;
-      crashed)   echo "crashé|$RED" ;;
-      stopped)   echo "arrêté|$YELLOW" ;;
-      *)         echo "arrêté|$YELLOW" ;;
+      completed)       echo "terminé|$GREEN" ;;
+      crashed)         echo "crashé|$RED" ;;
+      stopped)         echo "arrêté|$YELLOW" ;;
+      budget_exceeded) echo "budget dépassé|$RED" ;;
+      *)               echo "arrêté|$YELLOW" ;;
     esac
   else
     echo "arrêté|$YELLOW"
@@ -1032,11 +1033,12 @@ $(cat "$dir/.orc/ROADMAP.md")
 
   # État du run
   if [ -f "$dir/.orc/state.json" ] && command -v jq &>/dev/null; then
-    local cur_feat cur_phase feat_count run_status cost
+    local cur_feat cur_phase feat_count run_status workflow_phase cost
     cur_feat=$(jq -r '.current_feature // ""' "$dir/.orc/state.json" 2>/dev/null)
     cur_phase=$(jq -r '.current_phase // ""' "$dir/.orc/state.json" 2>/dev/null)
     feat_count=$(jq -r '.feature_count // 0' "$dir/.orc/state.json" 2>/dev/null)
     run_status=$(jq -r '.run_status // ""' "$dir/.orc/state.json" 2>/dev/null)
+    workflow_phase=$(jq -r '.workflow_phase // ""' "$dir/.orc/state.json" 2>/dev/null)
     cost=""
     if [ -f "$dir/.orc/tokens.json" ]; then
       cost=$(jq -r '.total_cost_usd // ""' "$dir/.orc/tokens.json" 2>/dev/null)
@@ -1044,6 +1046,7 @@ $(cat "$dir/.orc/ROADMAP.md")
     context="${context}
 ## État du run
 - Status : ${run_status:-inconnu}
+- Workflow : ${workflow_phase:-init}
 - Features complétées : ${feat_count}
 - Feature en cours : ${cur_feat:-aucune}
 - Phase : ${cur_phase:-inconnue}
@@ -1560,6 +1563,18 @@ cmd_dashboard() {
     local pbar_pad=$((10 - ${#done_count} - ${#total_feats}))
     [ $pbar_pad -lt 0 ] && pbar_pad=0
     printf "%*s${BOLD}║${NC}\n" "$pbar_pad" ""
+
+    # Workflow phase
+    local workflow_phase=""
+    if [ -f "$state_file" ] && command -v jq &> /dev/null; then
+      workflow_phase=$(jq -r '.workflow_phase // ""' "$state_file" 2>/dev/null)
+    fi
+    if [ -n "$workflow_phase" ] && [ "$workflow_phase" != "null" ] && [ "$workflow_phase" != "init" ]; then
+      printf "${BOLD}║${NC}  Workflow   ${BLUE}%s${NC}" "$workflow_phase"
+      local wf_pad=$((49 - ${#workflow_phase}))
+      [ $wf_pad -lt 0 ] && wf_pad=0
+      printf "%*s${BOLD}║${NC}\n" "$wf_pad" ""
+    fi
 
     # Current feature
     local cur_feat="" cur_phase=""

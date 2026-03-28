@@ -129,6 +129,9 @@ Avant chaque invocation, `run_claude()` estime le coût probable (~4000 tokens i
 ### Stall kill auto
 `STALL_KILL_THRESHOLD` (config, défaut 60 = 5min) : kill automatique si Claude ne produit aucune donnée pendant ce seuil. Complète le warning à 2min et le timeout global.
 
+### Migration config auto
+`migrate_config()` s'exécute au démarrage. Compare la config du projet (`.orc/config.sh`) avec `config.default.sh` du template orc. Ajoute automatiquement les paramètres manquants avec leurs valeurs par défaut. Permet aux projets existants de bénéficier des nouvelles options (CLAUDE_MODEL_LIGHT, PHASE_TIMEOUTS, etc.) sans intervention humaine.
+
 ### render_phase()
 Substitue `{{VAR}}` dans les prompts. Attention : la substitution bash `${content//pattern/replacement}` casse si `replacement` contient `/` ou `\`. Pour les outputs build/test, utiliser `write_fix_prompt()` à la place.
 
@@ -143,8 +146,11 @@ Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `.orc/research/IN
 ### Mémoire inter-features (known-issues.md)
 `.orc/known-issues.md` : alimenté automatiquement quand un fix réussit après des échecs. Contient la réflexion qui a mené au fix. Injecté dans le prompt de fix des features suivantes pour ne pas répéter les mêmes erreurs.
 
-### Review adversariale (critic)
-`phases/03b-critic.md` — 10 turns max, modèle léger. Exécutée entre implement+lint et les tests. Review le diff vs main pour trouver les bugs évidents (imports manquants, typos, logique inversée) et les corriger AVANT le cycle de test coûteux.
+### Review adversariale (critic) — multi-agent
+`phases/03b-critic.md` — 10 turns max, modèle **principal** (pas léger). Exécutée entre implement+lint et les tests. Utilise un `--append-system-prompt` adversarial ("reviewer senior sceptique") distinct du coder pour éliminer le biais de confirmation. Review le diff vs main, corrige max 3 bugs AVANT le cycle de test coûteux.
+
+### Apprentissage adaptatif des turns
+`adaptive_max_turns()` calcule le max_turns optimal par phase basé sur l'historique réel (p75 + 30% marge). Stocké dans `tokens.json` (`by_phase.X.turns_history[]`). Après 3+ invocations d'une phase, le max_turns est réduit automatiquement si la phase utilise moins que prévu. Le défaut reste comme plafond. Évite de réserver 50 turns pour une phase qui en utilise 12.
 
 ### Lint pré-tests
 Si `LINT_COMMAND` est défini, exécuté entre implement et la review adversariale. En cas d'échec, correction automatique par Claude (10 turns max) avant de lancer les tests.

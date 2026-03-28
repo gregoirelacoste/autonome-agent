@@ -35,7 +35,7 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
             │   Veille ciblée (avant chaque epic)       │
             │       │                                   │
             │       ▼                                   │
-            │   Implement ──▶ Test ──▶ Fix (loop) ─┐   │
+            │   Plan ──▶ Implement ──▶ Lint ──▶ Critic ──▶ Test ──▶ Fix (loop) ─┐ │
             │                                      │   │
             │       ┌──────────────────────────────┘   │
             │       ▼                                   │
@@ -178,31 +178,56 @@ Recherche focalisée sur le domaine de l'epic :
 
 Met à jour `research/` et ajuste les specs dans `ROADMAP.md`.
 
-### 3b. Implémentation
+### 3b. Micro-phase Plan
+
+5 turns max, modèle léger (`CLAUDE_MODEL_LIGHT`). Produit `.orc/logs/plan-N.md` :
+- Fichiers à modifier, interfaces, tests, risques
+- Le plan est injecté dans le prompt d'implémentation
+- Détecte les erreurs de conception AVANT de coder, réduit les cycles de fix
+
+### 3c. Implémentation
 
 1. Crée une branche `feature/<nom>`
-2. Lit le code existant et `research/INDEX.md`
+2. Lit le plan + le code existant (via INDEX.md + auto-map.md injectés)
 3. Implémente la feature
-4. Écrit les tests E2E Playwright
-5. Build + tests locaux
-6. Auto-review du code
-7. Commit atomique
+4. Écrit les tests
+5. Build
+6. Commit atomique
 
-### 3c. Test & Fix Loop
+### 3d. Lint
+
+Si `LINT_COMMAND` est défini, exécuté entre implement et la review adversariale.
+En cas d'échec, correction automatique par Claude (10 turns max) avant de continuer.
+
+### 3e. Review adversariale (Critic) — Multi-agent
+
+`phases/03b-critic.md` — 10 turns max, modèle **principal** (pas léger).
+Utilise `--append-system-prompt` avec un persona adversarial ("reviewer senior sceptique")
+distinct du coder pour éliminer le biais de confirmation.
+- Review le diff vs main
+- Corrige max 3 bugs AVANT le cycle de test coûteux
+- Persona séparé = multi-agent (le critic ne partage pas le contexte du coder)
+
+### 3f. Test & Fix Loop
 
 ```
 attempt = 0
 while (build échoue OU tests échouent) AND attempt < MAX_FIX:
-    Claude analyse l'erreur
+    Claude analyse l'erreur (error_hash pour détecter les boucles)
+    Claude écrit une réflexion structurée (fix-reflections-N.md)
+    known-issues.md injecté (mémoire inter-features)
     Claude corrige le code
     Relance build + tests
     attempt++
+
+    Même erreur 2x → prompt "change d'approche"
+    Même erreur 3x → abandon anticipé
 
 Si attempt == MAX_FIX:
     Feature marquée en échec, on passe à la suite
 ```
 
-### 3d. Reflect & Evolve (auto-amélioration)
+### 3g. Reflect & Evolve (auto-amélioration)
 
 Après chaque feature, Claude enrichit sa connaissance du projet :
 
@@ -244,6 +269,10 @@ Claude analyse le projet terminé et :
 2. Identifie des optimisations ou refactorings
 3. Ou déclare le projet terminé → crée `DONE.md` avec bilan final
 
+Le cycle evolve utilise une boucle `while` interne (pas `exec "$0"`) pour
+relancer la boucle feature sans redémarrer le process. Le compteur `evolve_cycle`
+est incrémenté et limité par `MAX_EVOLVE_CYCLES`.
+
 ---
 
 ## Auto-amélioration — ce que Claude modifie sur lui-même
@@ -278,9 +307,16 @@ Tout est configurable dans `.orc/config.sh` :
 
 ```bash
 # === GARDE-FOUS ===
-MAX_FIX_ATTEMPTS=5              # Tentatives de correction par feature
+MAX_FIX_ATTEMPTS=3              # Tentatives de correction par feature
 MAX_FEATURES=50                 # Nombre total de features avant arrêt
 MAX_TURNS_PER_INVOCATION=50     # Limite de turns par appel Claude
+
+# === BUDGET ===
+MAX_BUDGET_USD="200.00"         # Budget max en USD (prédictif + post-hoc)
+
+# === MODÈLES ===
+CLAUDE_MODEL=""                 # Modèle principal (implement, fix, critic). Vide = défaut CLI
+CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger (plan, reflect, research)
 
 # === RYTHME ===
 META_RETRO_FREQUENCY=5          # Méta-rétrospective toutes les N features
@@ -297,12 +333,22 @@ MAX_AI_ROADMAP_ADDS=5           # Max features ajoutées par l'IA avant pause
 NOTIFY_COMMAND=""               # Commande de notification (ex: notify-send, slack webhook)
 
 # === RECHERCHE ===
-MAX_TURNS_RESEARCH_INITIAL=80   # Budget recherche initiale
-MAX_TURNS_RESEARCH_EPIC=40      # Budget veille ciblée par epic
-MAX_TURNS_RESEARCH_TREND=50     # Budget veille tendances
+MAX_TURNS_RESEARCH_INITIAL=50   # Budget recherche initiale
+MAX_TURNS_RESEARCH_EPIC=20      # Budget veille ciblée par epic
+MAX_TURNS_RESEARCH_TREND=30     # Budget veille tendances
 
 # === TECHNIQUE ===
-QUALITY_COMMAND=""               # Quality gate post-tests (ex: lighthouse, bundle-size)
+LINT_COMMAND="npm run lint"     # Lint entre implement et critic (vide = désactivé)
+QUALITY_COMMAND=""              # Quality gate post-tests (ex: lighthouse, bundle-size)
+FUNCTIONAL_CHECK_COMMAND=""     # Vérification fonctionnelle post-merge
+
+# === TIMEOUTS ===
+CLAUDE_TIMEOUT=900              # Timeout global par invocation (secondes)
+STALL_KILL_THRESHOLD=60         # Checks sans données avant kill auto (×5s = 5min)
+declare -A PHASE_TIMEOUTS=(     # Timeouts par phase (surcharge CLAUDE_TIMEOUT)
+    [plan]=120 [implement]=900 [fix]=600 [critic]=300
+    [reflect]=180 [research]=600 [strategy]=600 [meta-retro]=600
+)
 ```
 
 **Modes d'utilisation :**
@@ -344,6 +390,7 @@ changé et le résumé de la rétrospective avant d'approuver un merge.
 Quand l'agent tourne en background, l'humain peut déposer des fichiers dans `.orc/` :
 - `.orc/pause-requested` → pause au prochain checkpoint (attend `.orc/continue` pour reprendre)
 - `.orc/stop-after-feature` → arrêt propre après la feature en cours
+- `.orc/skip-feature` → saute la feature en cours, passe à la suivante
 
 ### Notifications
 

@@ -137,7 +137,8 @@ get_model_pricing() {
 
 # Phases légères qui utilisent CLAUDE_MODEL_LIGHT si disponible
 # Phases non-code : pas besoin du modèle principal (text, recherche web, décision)
-LIGHT_PHASES="plan critic reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve"
+# Phases légères (modèle léger). Le critic utilise le modèle PRINCIPAL (review de qualité)
+LIGHT_PHASES="plan reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve"
 
 # Résoudre le modèle effectif pour une phase donnée
 # Usage: resolve_model "reflection" → affiche le modèle à utiliser
@@ -212,6 +213,55 @@ write_action_required() {
 # Efface le fichier action-required (appelé au démarrage)
 clear_action_required() {
   rm -f "$SCRIPT_DIR/.orc/action-required"
+}
+
+# Apprentissage adaptatif : calcule un max_turns optimal basé sur l'historique
+# Utilise le p75 des turns passés + 30% de marge, avec un minimum plancher
+# Usage: adaptive_max_turns "implement" 50  → affiche le max_turns recommandé
+adaptive_max_turns() {
+  local phase="$1"
+  local default_max="$2"
+
+  # Besoin de jq et du fichier tokens
+  if ! command -v jq &>/dev/null || [ ! -f "$TOKENS_FILE" ]; then
+    echo "$default_max"
+    return
+  fi
+
+  # Extraire l'historique des turns pour cette phase
+  local turns_json
+  turns_json=$(jq -r ".by_phase[\"$phase\"].turns_history // []" "$TOKENS_FILE" 2>/dev/null)
+
+  # Filtrer les 0 (phases tronquées par max_turns, non significatives)
+  local clean_json
+  clean_json=$(echo "$turns_json" | jq '[.[] | select(. > 0)]' 2>/dev/null || echo "[]")
+
+  # Besoin d'au moins 5 échantillons valides pour adapter
+  local count
+  count=$(echo "$clean_json" | jq 'length' 2>/dev/null || echo "0")
+  if [ "$count" -lt 5 ]; then
+    echo "$default_max"
+    return
+  fi
+
+  # Calculer le p75 (75ème percentile) + 30% de marge
+  local adaptive
+  adaptive=$(echo "$clean_json" | jq '
+    sort |
+    ((length - 1) * 0.75 | floor) as $idx |
+    .[$idx] * 1.3 |
+    ceil |
+    if . < 5 then 5 else . end
+  ' 2>/dev/null || echo "$default_max")
+
+  # Ne jamais dépasser le défaut (garde-fou), ne jamais descendre sous 5
+  if [ "$adaptive" -gt "$default_max" ] 2>/dev/null; then
+    echo "$default_max"
+  elif [ "$adaptive" -lt 5 ] 2>/dev/null; then
+    echo "5"
+  else
+    echo "$adaptive"
+  fi
 }
 
 # === FONCTIONS UTILITAIRES ===
@@ -445,6 +495,8 @@ track_tokens() {
   local phase="$1"
   local feature="${2:-}"
   local json_output="$3"
+  local model="${4:-unknown}"
+  local actual_turns="${5:-0}"
 
   if ! command -v jq &> /dev/null; then
     return 0
@@ -490,6 +542,8 @@ track_tokens() {
     --arg phase "$phase" \
     --arg feature "$feature" \
     --arg ts "$timestamp" \
+    --arg model "$model" \
+    --argjson turns "$actual_turns" \
     '
     .total_input_tokens = $total_in |
     .total_output_tokens = $total_out |
@@ -499,6 +553,8 @@ track_tokens() {
     .by_phase[$phase].output_tokens = ((.by_phase[$phase].output_tokens // 0) + $output) |
     .by_phase[$phase].cost_usd = ((.by_phase[$phase].cost_usd // 0) + $cost) |
     .by_phase[$phase].calls = ((.by_phase[$phase].calls // 0) + 1) |
+    .by_phase[$phase].models_used[$model] = ((.by_phase[$phase].models_used[$model] // 0) + 1) |
+    .by_phase[$phase].turns_history = (((.by_phase[$phase].turns_history // []) + [$turns]) | .[-20:]) |
     (if $feature != "" then
       .by_feature[$feature].input_tokens = ((.by_feature[$feature].input_tokens // 0) + $input) |
       .by_feature[$feature].output_tokens = ((.by_feature[$feature].output_tokens // 0) + $output) |
@@ -508,6 +564,8 @@ track_tokens() {
       "timestamp": $ts,
       "phase": $phase,
       "feature": $feature,
+      "model": $model,
+      "turns": $turns,
       "input_tokens": $input,
       "output_tokens": $output,
       "cost_usd": $cost
@@ -551,16 +609,26 @@ print_cost_summary() {
 }
 
 # Run Claude avec tracking de tokens et logs temps réel
+# Args: prompt, max_turns, log_file, phase_name, feature_name, [system_prompt]
 run_claude() {
   local prompt="$1"
   local max_turns="${2:-$MAX_TURNS_PER_INVOCATION}"
   local log_file="${3:-/dev/null}"
   local phase_name="${4:-unknown}"
   local feature_name="${5:-}"
+  local custom_system_prompt="${6:-}"
 
   local exit_code=0
   local start_time
   start_time=$(date +%s)
+
+  # Apprentissage adaptatif : ajuster max_turns selon l'historique réel
+  local adapted
+  adapted=$(adaptive_max_turns "$phase_name" "$max_turns")
+  if [ "$adapted" != "$max_turns" ]; then
+    log INFO "  Turns adaptatifs: $max_turns → $adapted [phase=$phase_name] (basé sur l'historique)"
+    max_turns="$adapted"
+  fi
 
   log INFO "→ Claude lancé [phase=$phase_name] [max_turns=$max_turns]..."
 
@@ -680,14 +748,24 @@ $prompt"
 
   TMP_JSON=$(mktemp)
 
-  # shellcheck disable=SC2086
-  claude -p "$full_prompt" \
-    --dangerously-skip-permissions \
-    --max-turns "$max_turns" \
-    --output-format stream-json \
-    --verbose \
-    $model_flag \
-    -d "$PROJECT_DIR" > "$TMP_JSON" 2>&1 &
+  # Construire les arguments Claude dans un array (évite la duplication)
+  local -a claude_args=(
+    -p "$full_prompt"
+    --dangerously-skip-permissions
+    --max-turns "$max_turns"
+    --output-format stream-json
+    --verbose
+  )
+  if [ -n "$effective_model" ]; then
+    claude_args+=(--model "$effective_model")
+  fi
+  # Multi-agent : append le system prompt (ne remplace PAS le défaut + CLAUDE.md)
+  if [ -n "$custom_system_prompt" ]; then
+    claude_args+=(--append-system-prompt "$custom_system_prompt")
+  fi
+  claude_args+=(-d "$PROJECT_DIR")
+
+  claude "${claude_args[@]}" > "$TMP_JSON" 2>&1 &
 
   CLAUDE_PID=$!
 
@@ -792,16 +870,32 @@ $prompt"
     fi
   fi
 
-  # Détecter error_max_turns — l'implémentation est probablement incomplète
+  # Détecter error_max_turns — la phase a été tronquée par le max_turns
+  local result_subtype=""
   if command -v jq &> /dev/null; then
-    local result_subtype
     result_subtype=$(echo "$json_output" | jq -r '.subtype // ""' 2>/dev/null || true)
     if [ "$result_subtype" = "error_max_turns" ]; then
-      log WARN "Claude a atteint la limite de turns ($MAX_TURNS_PER_INVOCATION) en phase '$phase_name' — résultat potentiellement incomplet."
+      log WARN "Claude a atteint la limite de turns ($max_turns) en phase '$phase_name' — résultat potentiellement incomplet."
     fi
   fi
 
-  track_tokens "$phase_name" "$feature_name" "$json_output"
+  # Compter les turns réellement utilisés (nombre de messages assistant dans le stream)
+  local actual_turns=0
+  actual_turns=$(grep -c '"role":"assistant"' "$TMP_JSON" 2>/dev/null || echo "0")
+  # Fallback : essayer l'autre format si 0
+  if [ "$actual_turns" -eq 0 ]; then
+    actual_turns=$(grep -c '"type":"assistant"' "$TMP_JSON" 2>/dev/null || echo "0")
+  fi
+
+  # Ne PAS enregistrer les turns si la phase a été tronquée par max_turns
+  # (sinon feedback loop négatif : moins de turns → historique bas → encore moins de turns)
+  local turns_to_record="$actual_turns"
+  if [ "$result_subtype" = "error_max_turns" ]; then
+    turns_to_record=0
+    log WARN "Turns non enregistrés (tronqués par max_turns=$max_turns)"
+  fi
+
+  track_tokens "$phase_name" "$feature_name" "$json_output" "$effective_model" "$turns_to_record"
 
   if [ -n "${MAX_BUDGET_USD:-}" ]; then
     local over_budget
@@ -811,7 +905,11 @@ $prompt"
       print_cost_summary
       rm -f "$TMP_JSON"
       TMP_JSON=""
-      exit 1
+      workflow_transition "budget_exceeded"
+      RUN_STATUS="budget_exceeded"
+      RUN_ENDED_AT=$(date -Iseconds)
+      save_state
+      exit 0
     fi
   fi
 
@@ -1962,6 +2060,73 @@ init_tokens
 restore_state
 gh_restore_tracking_issue
 
+# === MIGRATION CONFIG AUTO ===
+# Détecte les paramètres manquants dans la config du projet et les ajoute
+# avec les valeurs par défaut. Permet aux projets existants de bénéficier
+# des nouvelles options sans intervention humaine.
+migrate_config() {
+  # Résoudre la config projet (supporte .orc/config.sh et config.sh rétrocompat)
+  local project_config="$SCRIPT_DIR/.orc/config.sh"
+  [ -f "$project_config" ] || project_config="$SCRIPT_DIR/config.sh"
+  [ -f "$project_config" ] || return 0
+
+  # Vérifier que la config est writable
+  [ -w "$project_config" ] || { log WARN "Config non writable ($project_config) — migration ignorée."; return 0; }
+
+  # Résoudre le chemin du template orc (via le symlink orchestrator.sh)
+  local orc_dir
+  orc_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || realpath "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
+  local default_config="$orc_dir/config.default.sh"
+  [ -f "$default_config" ] || return 0
+
+  local migrated=0
+
+  # Extraire les paramètres définis dans config.default.sh (VAR=value, pas les commentaires ni declare)
+  while IFS= read -r line; do
+    # Ignorer les lignes vides, commentaires, declare, et sections
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^declare ]] && continue
+    [[ "$line" =~ ^\) ]] && continue
+
+    # Extraire le nom de la variable
+    local var_name="${line%%=*}"
+    var_name="${var_name#"${var_name%%[![:space:]]*}"}"  # trim leading spaces
+    [[ "$var_name" =~ ^[A-Z_][A-Z_0-9]*$ ]] || continue
+
+    # Vérifier si le paramètre existe dans la config du projet
+    if ! grep -q "^${var_name}=" "$project_config" 2>/dev/null; then
+      echo "# [migré auto]" >> "$project_config"
+      echo "$line" >> "$project_config"
+      migrated=$((migrated + 1))
+      log INFO "Config migrée : $var_name"
+    fi
+  done < "$default_config"
+
+  # Migrer PHASE_TIMEOUTS (declare -A, traitement spécial)
+  if ! grep -q "PHASE_TIMEOUTS" "$project_config" 2>/dev/null; then
+    if grep -q "declare -A PHASE_TIMEOUTS" "$default_config" 2>/dev/null; then
+      echo "# [migré auto] Timeouts par phase" >> "$project_config"
+      sed -n '/^declare -A PHASE_TIMEOUTS/,/^)/p' "$default_config" >> "$project_config"
+      migrated=$((migrated + 1))
+      log INFO "Config migrée : PHASE_TIMEOUTS"
+    fi
+  fi
+
+  if [ "$migrated" -gt 0 ]; then
+    log INFO "Migration config : $migrated paramètres ajoutés."
+  fi
+}
+migrate_config
+
+# Re-source la config au top-level après migration (declare -A PHASE_TIMEOUTS
+# crée un array local si sourcé dans une fonction — le re-source ici le rend global)
+if [ -f "$SCRIPT_DIR/.orc/config.sh" ]; then
+  source "$SCRIPT_DIR/.orc/config.sh"
+elif [ -f "$SCRIPT_DIR/config.sh" ]; then
+  source "$SCRIPT_DIR/config.sh"
+fi
+
 clear_action_required
 log PHASE "DÉMARRAGE DE L'AGENT AUTONOME"
 log INFO "Config : MAX_FEATURES=$MAX_FEATURES | MAX_FIX=$MAX_FIX_ATTEMPTS | EPIC_SIZE=$EPIC_SIZE"
@@ -2204,11 +2369,13 @@ Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/s
     fi
   fi
 
-  # --- Review adversariale (modèle léger, détecte les bugs évidents) ---
+  # --- Review adversariale (multi-agent : persona destructif, distinct du coder) ---
   update_phase_tracking "critic" "$feature_name"
   log INFO "Review adversariale en cours..."
   critic_prompt=$(render_phase "03b-critic.md" "FEATURE_NAME=$feature_name")
-  run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" || {
+  # System prompt adversarial : persona distinct du coder
+  local critic_system='Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'\''as PAS écrit ce code — un autre développeur l'\''a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel.'
+  run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" "$critic_system" || {
     log WARN "Review adversariale échouée — on continue."
   }
 

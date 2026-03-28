@@ -2,6 +2,8 @@
 
 Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. La config est générée à partir de `config.default.sh` lors de la création du projet.
 
+**Migration auto** : au démarrage, l'orchestrateur détecte les paramètres manquants et les ajoute automatiquement avec les valeurs par défaut. Pas d'action requise.
+
 ## Modes d'autonomie
 
 | Mode | Config | Comportement |
@@ -16,14 +18,14 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 
 | Paramètre | Défaut | Description |
 |---|---|---|
-| `PROJECT_DIR` | `./project` | Chemin du code produit |
+| `PROJECT_DIR` | `.` | Chemin du code produit |
 | `PROJECT_NAME` | *(vide)* | Nom du projet (rempli par init) |
 
 ### Garde-fous
 
 | Paramètre | Défaut | Description |
 |---|---|---|
-| `MAX_FIX_ATTEMPTS` | 5 | Tentatives de fix par feature avant abandon |
+| `MAX_FIX_ATTEMPTS` | 3 | Tentatives de fix par feature avant abandon |
 | `MAX_FEATURES` | 50 | Nombre total de features avant arrêt |
 | `MAX_TURNS_PER_INVOCATION` | 50 | Turns Claude par invocation |
 
@@ -49,9 +51,9 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 | Paramètre | Défaut | Description |
 |---|---|---|
 | `ENABLE_RESEARCH` | true | Activer la veille marché |
-| `MAX_TURNS_RESEARCH_INITIAL` | 80 | Turns pour la recherche initiale |
-| `MAX_TURNS_RESEARCH_EPIC` | 40 | Turns pour la veille par epic |
-| `MAX_TURNS_RESEARCH_TREND` | 50 | Turns pour la veille tendances |
+| `MAX_TURNS_RESEARCH_INITIAL` | 50 | Turns pour la recherche initiale |
+| `MAX_TURNS_RESEARCH_EPIC` | 20 | Turns pour la veille par epic |
+| `MAX_TURNS_RESEARCH_TREND` | 30 | Turns pour la veille tendances |
 
 ### Technique
 
@@ -60,20 +62,47 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 | `BUILD_COMMAND` | `npm run build` | Commande de build |
 | `TEST_COMMAND` | `npx playwright test` | Commande de test |
 | `DEV_COMMAND` | `npm run dev` | Commande dev server |
-| `LINT_COMMAND` | `npm run lint` | Commande lint |
+| `LINT_COMMAND` | `npm run lint` | Commande lint (vide = désactivé) |
 | `QUALITY_COMMAND` | *(vide)* | Commande qualité (après tests, avant merge) |
+| `FUNCTIONAL_CHECK_COMMAND` | *(vide)* | Vérification fonctionnelle post-feature |
+
+### Modèles
+
+| Paramètre | Défaut | Description |
+|---|---|---|
+| `CLAUDE_MODEL` | *(vide = défaut CLI)* | Modèle principal (implement, fix) |
+| `CLAUDE_MODEL_LIGHT` | `claude-haiku-4-5-20251001` | Modèle léger (plan, reflect, research, etc.) |
 
 ### Budget
 
 | Paramètre | Défaut | Description |
 |---|---|---|
-| `MAX_BUDGET_USD` | *(vide)* | Budget max en USD (vide = illimité) |
+| `MAX_BUDGET_USD` | `200.00` | Budget max en USD. Garde-fou avec vérification prédictive + post-hoc |
 
 ### Timeouts
 
 | Paramètre | Défaut | Description |
 |---|---|---|
-| `CLAUDE_TIMEOUT` | 1200 | Timeout par invocation Claude (secondes) |
+| `CLAUDE_TIMEOUT` | 900 | Timeout global par invocation (secondes). 900 = 15min |
+| `STALL_KILL_THRESHOLD` | 60 | Checks sans données avant kill auto (×5s). 60 = 5min |
+| `PHASE_TIMEOUTS` | *(voir ci-dessous)* | Timeouts par phase (declare -A) |
+
+#### Timeouts par phase (PHASE_TIMEOUTS)
+
+| Phase | Timeout | Description |
+|---|---|---|
+| `plan` | 120s (2min) | Planification rapide |
+| `critic` | 600s (10min) | Review adversariale (modèle principal) |
+| `reflect` | 180s (3min) | Rétrospective feature |
+| `quality` | 180s (3min) | Correction quality gate |
+| `self-improve` | 300s (5min) | Auto-amélioration |
+| `strategy` | 300s (5min) | Génération roadmap |
+| `evolve` | 300s (5min) | Évolution roadmap |
+| `research-initial` | 600s (10min) | Recherche web |
+| `research-epic` | 300s (5min) | Veille ciblée |
+| `meta-retro` | 600s (10min) | Méta-rétrospective |
+| `implement` | 900s (15min) | Implémentation |
+| `fix` | 600s (10min) | Correction |
 
 ### Logs
 
@@ -89,6 +118,7 @@ Voir [github-integration.md](github-integration.md) pour le détail.
 | Paramètre | Défaut | Description |
 |---|---|---|
 | `GIT_STRATEGY` | `local` | `local` (merge direct) ou `pr` (Pull Requests) |
+| `GITHUB_REMOTE` | `origin` | Remote Git pour push/PR |
 | `GITHUB_TRACKING_ISSUE` | false | Créer une issue de suivi |
 | `GITHUB_SIGNALS` | false | Labels comme signaux (orc:pause, orc:stop) |
 | `GITHUB_SYNC_ROADMAP` | false | Miroir roadmap → GitHub Issues |
@@ -106,4 +136,4 @@ vim ~/projects/mon-projet/.orc/config.sh
 orc admin config set CLAUDE_MODEL claude-sonnet-4-6-20250514
 ```
 
-Les changements sont pris en compte au prochain lancement de l'orchestrateur (ou au restart).
+Les changements sont pris en compte au prochain lancement de l'orchestrateur (ou au restart). Les nouveaux paramètres sont migrés automatiquement au démarrage.

@@ -82,12 +82,15 @@ Les paramètres clés :
 | Paramètre | Défaut | Description |
 |---|---|---|
 | `MAX_FEATURES` | 50 | Nombre total de features avant arrêt |
-| `MAX_FIX_ATTEMPTS` | 5 | Tentatives de fix par feature |
+| `MAX_FIX_ATTEMPTS` | 3 | Tentatives de fix par feature |
+| `MAX_BUDGET_USD` | 200.00 | Budget max en USD (prédictif + post-hoc) |
 | `REQUIRE_HUMAN_APPROVAL` | false | Valider chaque merge manuellement |
 | `PAUSE_EVERY_N_FEATURES` | 0 | Pause toutes les N features (0 = jamais) |
 | `BUILD_COMMAND` | `npm run build` | Commande de build |
 | `TEST_COMMAND` | `npx playwright test` | Commande de test |
-| `CLAUDE_MODEL` | *(défaut CLI)* | Modèle Claude à utiliser |
+| `CLAUDE_MODEL` | *(défaut CLI)* | Modèle principal (implement, fix, critic) |
+| `CLAUDE_MODEL_LIGHT` | `claude-haiku-4-5` | Modèle léger (plan, reflect, research) |
+| `STALL_KILL_THRESHOLD` | 60 | Checks sans données avant kill auto (x5s) |
 
 Voir `config.default.sh` pour la liste complète.
 
@@ -119,6 +122,9 @@ touch ~/projects/mon-projet/.orc/pause-requested
 
 # Arrêter proprement après la feature en cours
 touch ~/projects/mon-projet/.orc/stop-after-feature
+
+# Sauter la feature en cours (passe à la suivante)
+touch ~/projects/mon-projet/.orc/skip-feature
 
 # Arrêt immédiat
 ./orc.sh agent stop mon-projet
@@ -185,14 +191,17 @@ BRIEF.md (immuable)
 BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
                                            │
                                            ▼
-                                    ┌──────────────┐
-                                    │ BOUCLE x N   │
-                                    │              │
-                                    │ Veille ciblée │
-                                    │ Implement     │
-                                    │ Test & Fix    │
-                                    │ Reflect       │
-                                    └──────┬───────┘
+                                    ┌──────────────────┐
+                                    │   BOUCLE x N     │
+                                    │                  │
+                                    │ Veille ciblée    │
+                                    │ Plan (micro)     │
+                                    │ Implement        │
+                                    │ Lint             │
+                                    │ Critic (review)  │
+                                    │ Tests & Fix      │
+                                    │ Reflect          │
+                                    └──────┬───────────┘
                                            │
                                   toutes les N features
                                            │

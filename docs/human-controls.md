@@ -38,6 +38,14 @@ touch ~/projects/mon-projet/.orc/stop-after-feature
 
 Comme pause, mais l'orchestrateur s'arrête complètement après la feature. Reprend au restart.
 
+### Skip la feature en cours
+
+```bash
+touch ~/projects/mon-projet/.orc/skip-feature
+```
+
+Abandonne la feature en cours (la coche dans la ROADMAP) et passe à la suivante. Utile quand une feature est bloquée sans vouloir stopper tout le run.
+
 ### Arrêt immédiat
 
 ```bash

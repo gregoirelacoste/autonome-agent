@@ -1,13 +1,14 @@
 # ORC — Paramètres de configuration
 
 Fichier source : config.default.sh → copié en .orc/config.sh par init.sh
+Migration auto : migrate_config() ajoute les paramètres manquants au démarrage.
 
 ## Projet
-- `PROJECT_DIR` — chemin vers le dossier projet (default: "./project")
-- `PROJECT_NAME` — nom du projet (rempli par init.sh)
+- `PROJECT_DIR="."` — racine du workspace
+- `PROJECT_NAME=""` — nom du projet (rempli par init.sh)
 
 ## Garde-fous
-- `MAX_FIX_ATTEMPTS=5` — tentatives de correction par feature
+- `MAX_FIX_ATTEMPTS=3` — tentatives de correction par feature
 - `MAX_FEATURES=50` — nombre total de features avant arrêt
 - `MAX_TURNS_PER_INVOCATION=50` — limite de turns par appel Claude
 
@@ -27,23 +28,39 @@ Fichier source : config.default.sh → copié en .orc/config.sh par init.sh
 
 ## Recherche
 - `ENABLE_RESEARCH=true` — activer la veille marché
-- `MAX_TURNS_RESEARCH_INITIAL=80` — budget recherche initiale
-- `MAX_TURNS_RESEARCH_EPIC=40` — budget veille ciblée par epic
-- `MAX_TURNS_RESEARCH_TREND=50` — budget veille tendances
+- `MAX_TURNS_RESEARCH_INITIAL=50` — budget recherche initiale
+- `MAX_TURNS_RESEARCH_EPIC=20` — budget veille ciblée par epic
+- `MAX_TURNS_RESEARCH_TREND=30` — budget veille tendances
 
 ## Technique
 - `BUILD_COMMAND="npm run build"` — commande de build
 - `TEST_COMMAND="npx playwright test"` — commande de test
 - `DEV_COMMAND="npm run dev"` — commande serveur dev
-- `LINT_COMMAND="npm run lint"` — commande lint
+- `LINT_COMMAND="npm run lint"` — commande lint (vide = désactivé)
 - `QUALITY_COMMAND=""` — quality gate post-tests
-- `CLAUDE_MODEL=""` — modèle Claude (vide = défaut CLI)
+- `FUNCTIONAL_CHECK_COMMAND=""` — vérification fonctionnelle post-feature
+
+## Modèles
+- `CLAUDE_MODEL=""` — modèle principal (implement, fix). Vide = défaut CLI
+- `CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"` — modèle léger (plan, reflect, research, etc.)
 
 ## Budget
-- `MAX_BUDGET_USD=""` — budget max en USD (vide = illimité)
+- `MAX_BUDGET_USD="200.00"` — budget max en USD (garde-fou prédictif + post-hoc)
 
 ## Timeouts
-- `CLAUDE_TIMEOUT=1200` — timeout par invocation Claude (secondes)
+- `CLAUDE_TIMEOUT=900` — timeout global par invocation (secondes). Surchargé par PHASE_TIMEOUTS
+- `STALL_KILL_THRESHOLD=60` — checks sans données avant kill auto (×5s = durée)
+- `declare -A PHASE_TIMEOUTS=(...)` — timeouts par phase (plan=120, implement=900, fix=600, etc.)
+
+## GitHub (optionnel)
+- `GIT_STRATEGY="local"` — "local" (merge direct) | "pr" (Pull Requests)
+- `GITHUB_REMOTE="origin"` — remote Git pour push/PR
+- `GITHUB_TRACKING_ISSUE=false` — créer une issue de suivi
+- `GITHUB_SIGNALS=false` — labels comme signaux
+- `GITHUB_SYNC_ROADMAP=false` — miroir roadmap → GitHub Issues
+- `GITHUB_FEEDBACK=false` — lire commentaires GitHub comme feedback
+- `GITHUB_CI=false` — attendre les checks GitHub Actions
+- `GITHUB_RELEASES=false` — créer des releases automatiques
 
 ## Logs
 - `LOG_DIR="./.orc/logs"` — dossier des logs
