@@ -649,8 +649,8 @@ $prompt"
     fi
 
     # Kill auto si stall prolongé (STALL_KILL_THRESHOLD × 5s)
-    local stall_kill="${STALL_KILL_THRESHOLD:-0}"
-    if [ "$stall_kill" -gt 0 ] && [ "$stall_count" -ge "$stall_kill" ]; then
+    local stall_kill_threshold="${STALL_KILL_THRESHOLD:-0}"
+    if [ "$stall_kill_threshold" -gt 0 ] && [ "$stall_count" -ge "$stall_kill_threshold" ]; then
       local stall_mins=$(( stall_count * 5 / 60 ))
       log ERROR "Claude bloqué depuis ${stall_mins}min — kill auto [phase=$phase_name]"
       kill "$CLAUDE_PID" 2>/dev/null || true
@@ -2013,6 +2013,7 @@ while [ $FEATURE_COUNT -lt $MAX_FEATURES ]; do
   if [ "$SKIP_CURRENT_FEATURE" = true ]; then
     log WARN "Feature '$feature_name' skippée par signal humain."
     timeline_update_last "skipped" 0
+    mark_feature_done_bash "$feature_name"  # Cocher pour ne pas la reprendre
     run_in_project "git checkout main 2>/dev/null || true"
     continue
   fi
