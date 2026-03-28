@@ -15,7 +15,7 @@ set -euo pipefail
 # ============================================================
 
 ORC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-ORC_VERSION="0.6.0"
+ORC_VERSION="0.7.0"
 
 # Charger les clés API
 ENV_FILE="$ORC_DIR/.env"

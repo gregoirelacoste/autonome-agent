@@ -253,6 +253,6 @@ Chaque item a un frontmatter YAML avec : `id`, `priority` (P0-P3), `type`, `effo
 
 ## Versioning
 
-Version actuelle : **v0.6.0** (définie dans `orc.sh:ORC_VERSION`)
+Version actuelle : **v0.7.0** (définie dans `orc.sh:ORC_VERSION`)
 
 Semver : **patch** = bugfix/typo, **minor** = nouvelle feature/phase/skill, **major** = changement breaking (format config, structure workspace). Utiliser le skill `/release` pour le process complet.
