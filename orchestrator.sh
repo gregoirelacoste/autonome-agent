@@ -501,7 +501,7 @@ track_tokens() {
     .by_phase[$phase].output_tokens = ((.by_phase[$phase].output_tokens // 0) + $output) |
     .by_phase[$phase].cost_usd = ((.by_phase[$phase].cost_usd // 0) + $cost) |
     .by_phase[$phase].calls = ((.by_phase[$phase].calls // 0) + 1) |
-    .by_phase[$phase].model = $model |
+    .by_phase[$phase].models_used[$model] = ((.by_phase[$phase].models_used[$model] // 0) + 1) |
     (if $feature != "" then
       .by_feature[$feature].input_tokens = ((.by_feature[$feature].input_tokens // 0) + $input) |
       .by_feature[$feature].output_tokens = ((.by_feature[$feature].output_tokens // 0) + $output) |
@@ -820,7 +820,11 @@ $prompt"
       print_cost_summary
       rm -f "$TMP_JSON"
       TMP_JSON=""
-      exit 1
+      workflow_transition "budget_exceeded"
+      RUN_STATUS="budget_exceeded"
+      RUN_ENDED_AT=$(date -Iseconds)
+      save_state
+      exit 0
     fi
   fi
 
