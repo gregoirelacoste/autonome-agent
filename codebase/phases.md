@@ -59,6 +59,15 @@
 - Corrige max 5 problèmes critiques directement
 - Modèle : principal
 
+## Phase 04c — QA (phases/04c-qa.md)
+- Placeholders : {{EPIC_NUMBER}}, {{FEATURE_COUNT}}, {{PORT}}
+- Déclenchée : après acceptance, si DEV_COMMAND est configurée
+- Teste l'app réellement : discovery routes, curl health check, fix 500, Playwright si dispo
+- Étapes bash à zéro tokens (curl) + IA pour diagnostic/fix uniquement
+- Écrit : .orc/logs/qa-report-N.md + .orc/logs/qa-screenshot-*.png
+- Max 5 fixes, max 5 scénarios navigateur, max 5 screenshots
+- Timeout : 10min. Modèle : principal (corrige du code)
+
 ## Phase 05 — Reflect (phases/05-reflect.md)
 - Placeholders : {{FEATURE_NAME}}, {{TESTS_PASSED}}, {{FIX_ATTEMPTS}}, {{N}}
 - Met à jour : codebase/*.md, INDEX.md, stack-conventions.md, CLAUDE.md, skills, ROADMAP.md

@@ -63,6 +63,7 @@ MAX_TURNS_RESEARCH_TREND=30              # Budget veille tendances (méta-rétro
 BUILD_COMMAND="npm run build"            # Commande de build
 TEST_COMMAND="npx playwright test"       # Commande de test
 DEV_COMMAND="npm run dev"                # Commande serveur dev
+DEV_PORT=3000                            # Port du serveur dev (pour les tests QA)
 LINT_COMMAND="npm run lint"              # Commande lint (vide = désactivé)
 QUALITY_COMMAND=""                       # Commande quality gate post-tests (vide = désactivé)
                                          # Ex: "npm run lighthouse -- --budget=80" ou "npx bundle-size-check"
@@ -106,6 +107,7 @@ declare -A PHASE_TIMEOUTS=(
   ["research-initial"]=600  # 10min — recherche web
   ["research-epic"]=300     # 5min  — veille ciblée
   ["acceptance"]=300         # 5min  — validation acceptance epic
+  ["qa"]=600                  # 10min — tests fonctionnels réels (curl + navigateur)
   ["tech-debt"]=600          # 10min — refactoring tech-debt
   ["user-docs"]=300          # 5min  — génération doc utilisateur
   ["meta-retro"]=600        # 10min — méta-rétrospective

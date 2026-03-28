@@ -3062,6 +3062,26 @@ COMMANDE DEV SERVER : ${DEV_COMMAND:-npm run dev}"
       log WARN "Acceptance échouée — on continue."
     }
 
+    # Phase QA : test fonctionnel réel (curl + navigateur)
+    if [ -n "${DEV_COMMAND:-}" ]; then
+      log PHASE "QA — Epic $epic_number"
+      update_phase_tracking "qa" "epic-$epic_number"
+      qa_prompt=""
+      qa_prompt=$(render_phase "04c-qa.md" \
+        "EPIC_NUMBER=$epic_number" \
+        "FEATURE_COUNT=$FEATURE_COUNT" \
+        "PORT=${DEV_PORT:-3000}")
+      qa_prompt="$qa_prompt
+
+COMMANDE DEV SERVER : ${DEV_COMMAND}
+PORT : ${DEV_PORT:-3000}"
+      run_claude "$qa_prompt" 30 "$LOG_DIR/qa-epic-$epic_number.log" "qa" "epic-$epic_number" || {
+        log WARN "QA échouée — on continue."
+      }
+    else
+      log INFO "QA skippée (pas de DEV_COMMAND configurée)."
+    fi
+
     # Mise à jour incrémentale du README (quick, modèle léger)
     run_claude "Mets à jour le README.md du projet pour refléter les features de l'Epic $epic_number.
 Lis .orc/ROADMAP.md pour voir les features cochées. Lis le README actuel.
@@ -3229,6 +3249,9 @@ fi  # fin du guard SKIP_TO_POST_PROJECT self-improve
 # ============================================================
 
 log PHASE "DOCUMENTATION UTILISATEUR"
+# DEBUG TRACE — à retirer après diagnostic
+exec 2>>"$LOG_DIR/orchestrator-debug-trace.log"
+set -x
 update_phase_tracking "user-docs" ""
 run_claude "$(cat "$SCRIPT_DIR/phases/08-user-docs.md")" 15 "$LOG_DIR/08-user-docs.log" "user-docs" || {
   log WARN "Génération doc utilisateur échouée — pas grave."

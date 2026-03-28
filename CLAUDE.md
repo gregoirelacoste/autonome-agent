@@ -113,6 +113,7 @@ Skills Claude Code disponibles pour travailler sur orc lui-même :
 - `/release` — process de release : pré-checks, semver (patch/minor/major), tag git, post-release
 - `/add-phase` — ajouter une nouvelle phase au workflow : créer le prompt, intégrer dans orchestrator.sh, documenter, tester la reprise
 - `/stack-conventions` — conventions de stack (template, copié dans les projets générés)
+- `/qa-fix` — testeur QA : curl toutes les routes, fix les 500, test navigateur Playwright, analyse screenshots (copié dans les projets générés)
 - `/orc-watch <projet>` — opérateur autonome : surveille un run, diagnostique les erreurs, corrige les bugs orc, relance si crash, note les améliorations en roadmap. Usage continu : `/loop 3m /orc-watch mon-app`
 
 ## Patterns importants
@@ -237,6 +238,9 @@ Après chaque échec de fix, l'IA écrit une réflexion structurée dans `.orc/l
 
 ### Phase acceptance (validation epic)
 `phases/04b-acceptance.md` — exécutée après chaque epic (toutes les `EPIC_SIZE` features). Valide les user stories du BRIEF de bout en bout : lance l'app, teste les scénarios utilisateur, écrit un rapport `acceptance-N.md` avec score X/Y scénarios passés. Corrige max 5 problèmes critiques directement. Les problèmes non critiques vont en backlog.
+
+### Phase QA (test fonctionnel réel)
+`phases/04c-qa.md` — exécutée après acceptance, si `DEV_COMMAND` est configurée. Teste l'app pour de vrai : discovery des routes (grep code), curl health check (zéro tokens), fix des 500 (max 5), test navigateur Playwright si disponible (max 5 scénarios + screenshots). Écrit `qa-report-N.md`. Modèle principal (corrige du code). Timeout 10min. `DEV_PORT` configurable (défaut 3000).
 
 ### Brief scoring (MVP-first)
 La phase strategy (`02-strategy.md`) score le brief sur 5 critères (clarté, scope, stack, succès, users) — note /25. Si score < 15/25, ajoute des hypothèses pour combler les manques. La roadmap est structurée en 2 phases : MVP (5-8 features max) + Améliorations (optionnel). Max 15 features totales. Le MVP doit être fonctionnel seul.
