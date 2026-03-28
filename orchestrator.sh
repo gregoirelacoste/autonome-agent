@@ -232,19 +232,23 @@ adaptive_max_turns() {
   local turns_json
   turns_json=$(jq -r ".by_phase[\"$phase\"].turns_history // []" "$TOKENS_FILE" 2>/dev/null)
 
-  # Besoin d'au moins 3 échantillons pour adapter
+  # Filtrer les 0 (phases tronquées par max_turns, non significatives)
+  local clean_json
+  clean_json=$(echo "$turns_json" | jq '[.[] | select(. > 0)]' 2>/dev/null || echo "[]")
+
+  # Besoin d'au moins 5 échantillons valides pour adapter
   local count
-  count=$(echo "$turns_json" | jq 'length' 2>/dev/null || echo "0")
-  if [ "$count" -lt 3 ]; then
+  count=$(echo "$clean_json" | jq 'length' 2>/dev/null || echo "0")
+  if [ "$count" -lt 5 ]; then
     echo "$default_max"
     return
   fi
 
   # Calculer le p75 (75ème percentile) + 30% de marge
   local adaptive
-  adaptive=$(echo "$turns_json" | jq '
+  adaptive=$(echo "$clean_json" | jq '
     sort |
-    (length * 0.75 | floor) as $idx |
+    ((length - 1) * 0.75 | floor) as $idx |
     .[$idx] * 1.3 |
     ceil |
     if . < 5 then 5 else . end
@@ -550,7 +554,7 @@ track_tokens() {
     .by_phase[$phase].cost_usd = ((.by_phase[$phase].cost_usd // 0) + $cost) |
     .by_phase[$phase].calls = ((.by_phase[$phase].calls // 0) + 1) |
     .by_phase[$phase].models_used[$model] = ((.by_phase[$phase].models_used[$model] // 0) + 1) |
-    .by_phase[$phase].turns_history = ((.by_phase[$phase].turns_history // []) + [$turns]) |
+    .by_phase[$phase].turns_history = (((.by_phase[$phase].turns_history // []) + [$turns]) | .[-20:]) |
     (if $feature != "" then
       .by_feature[$feature].input_tokens = ((.by_feature[$feature].input_tokens // 0) + $input) |
       .by_feature[$feature].output_tokens = ((.by_feature[$feature].output_tokens // 0) + $output) |
@@ -619,7 +623,6 @@ run_claude() {
   start_time=$(date +%s)
 
   # Apprentissage adaptatif : ajuster max_turns selon l'historique réel
-  local original_max="$max_turns"
   local adapted
   adapted=$(adaptive_max_turns "$phase_name" "$max_turns")
   if [ "$adapted" != "$max_turns" ]; then
@@ -745,31 +748,24 @@ $prompt"
 
   TMP_JSON=$(mktemp)
 
-  # System prompt personnalisé (multi-agent : coder vs reviewer)
-  local system_flag=""
-  if [ -n "$custom_system_prompt" ]; then
-    system_flag="--system-prompt"
+  # Construire les arguments Claude dans un array (évite la duplication)
+  local -a claude_args=(
+    -p "$full_prompt"
+    --dangerously-skip-permissions
+    --max-turns "$max_turns"
+    --output-format stream-json
+    --verbose
+  )
+  if [ -n "$effective_model" ]; then
+    claude_args+=(--model "$effective_model")
   fi
+  # Multi-agent : append le system prompt (ne remplace PAS le défaut + CLAUDE.md)
+  if [ -n "$custom_system_prompt" ]; then
+    claude_args+=(--append-system-prompt "$custom_system_prompt")
+  fi
+  claude_args+=(-d "$PROJECT_DIR")
 
-  # shellcheck disable=SC2086
-  if [ -n "$custom_system_prompt" ]; then
-    claude -p "$full_prompt" \
-      --dangerously-skip-permissions \
-      --max-turns "$max_turns" \
-      --output-format stream-json \
-      --verbose \
-      $model_flag \
-      --system-prompt "$custom_system_prompt" \
-      -d "$PROJECT_DIR" > "$TMP_JSON" 2>&1 &
-  else
-    claude -p "$full_prompt" \
-      --dangerously-skip-permissions \
-      --max-turns "$max_turns" \
-      --output-format stream-json \
-      --verbose \
-      $model_flag \
-      -d "$PROJECT_DIR" > "$TMP_JSON" 2>&1 &
-  fi
+  claude "${claude_args[@]}" > "$TMP_JSON" 2>&1 &
 
   CLAUDE_PID=$!
 
@@ -874,20 +870,32 @@ $prompt"
     fi
   fi
 
-  # Détecter error_max_turns — l'implémentation est probablement incomplète
+  # Détecter error_max_turns — la phase a été tronquée par le max_turns
+  local result_subtype=""
   if command -v jq &> /dev/null; then
-    local result_subtype
     result_subtype=$(echo "$json_output" | jq -r '.subtype // ""' 2>/dev/null || true)
     if [ "$result_subtype" = "error_max_turns" ]; then
-      log WARN "Claude a atteint la limite de turns ($MAX_TURNS_PER_INVOCATION) en phase '$phase_name' — résultat potentiellement incomplet."
+      log WARN "Claude a atteint la limite de turns ($max_turns) en phase '$phase_name' — résultat potentiellement incomplet."
     fi
   fi
 
   # Compter les turns réellement utilisés (nombre de messages assistant dans le stream)
   local actual_turns=0
-  actual_turns=$(grep -c '"type":"assistant"' "$TMP_JSON" 2>/dev/null || echo "0")
+  actual_turns=$(grep -c '"role":"assistant"' "$TMP_JSON" 2>/dev/null || echo "0")
+  # Fallback : essayer l'autre format si 0
+  if [ "$actual_turns" -eq 0 ]; then
+    actual_turns=$(grep -c '"type":"assistant"' "$TMP_JSON" 2>/dev/null || echo "0")
+  fi
 
-  track_tokens "$phase_name" "$feature_name" "$json_output" "$effective_model" "$actual_turns"
+  # Ne PAS enregistrer les turns si la phase a été tronquée par max_turns
+  # (sinon feedback loop négatif : moins de turns → historique bas → encore moins de turns)
+  local turns_to_record="$actual_turns"
+  if [ "$result_subtype" = "error_max_turns" ]; then
+    turns_to_record=0
+    log WARN "Turns non enregistrés (tronqués par max_turns=$max_turns)"
+  fi
+
+  track_tokens "$phase_name" "$feature_name" "$json_output" "$effective_model" "$turns_to_record"
 
   if [ -n "${MAX_BUDGET_USD:-}" ]; then
     local over_budget
@@ -2299,7 +2307,7 @@ Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/s
   log INFO "Review adversariale en cours..."
   critic_prompt=$(render_phase "03b-critic.md" "FEATURE_NAME=$feature_name")
   # System prompt adversarial : persona distinct du coder
-  local critic_system="Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'as PAS écrit ce code — un autre développeur l'a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel."
+  local critic_system='Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'\''as PAS écrit ce code — un autre développeur l'\''a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel.'
   run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" "$critic_system" || {
     log WARN "Review adversariale échouée — on continue."
   }

@@ -84,7 +84,7 @@ STALL_KILL_THRESHOLD=60                  # Nombre de checks sans données avant 
 # Ajuster selon vos besoins. Commenter pour tout ramener à CLAUDE_TIMEOUT.
 declare -A PHASE_TIMEOUTS=(
   ["plan"]=120              # 2min  — planification rapide
-  ["critic"]=180            # 3min  — review adversariale
+  ["critic"]=600            # 10min — review adversariale (modèle principal, 10 turns)
   ["reflect"]=180           # 3min  — rétrospective feature
   ["quality"]=180           # 3min  — correction quality gate
   ["self-improve"]=300      # 5min  — auto-amélioration
