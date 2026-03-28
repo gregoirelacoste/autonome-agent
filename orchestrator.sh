@@ -470,7 +470,8 @@ preflight_merge() {
   # 1. Fichiers sensibles modifiés ?
   local sensitive_files
   sensitive_files=$(run_in_project "git diff --name-only main 2>/dev/null" | \
-    grep -iE '\.env($|\.)|credentials|\.pem$|\.key$|\.cert$|\.p12$|\.pfx$|secret|password|token\.json|id_rsa|id_ed25519|\.npmrc|\.pypirc|\.htpasswd|service.account' || true)
+    grep -iE '\.env($|\.)|credentials|\.pem$|\.key$|\.cert$|\.p12$|\.pfx$|secret|password|token\.json|id_rsa|id_ed25519|\.npmrc|\.pypirc|\.htpasswd|service.account' | \
+    grep -viE '\.example$|\.sample$|\.template$|\.tsx?$|\.jsx?$|\.py$|\.go$|\.rb$|\.java$|\.rs$' || true)
   if [ -n "$sensitive_files" ]; then
     log ERROR "PREFLIGHT BLOQUÉ : fichiers sensibles modifiés :"
     log ERROR "  $sensitive_files"
@@ -618,7 +619,7 @@ Ne casse PAS les tests existants." \
 # Initialise le fichier de tracking tokens
 init_tokens() {
   mkdir -p "$LOG_DIR"
-  if [ ! -f "$TOKENS_FILE" ]; then
+  if [ ! -f "$TOKENS_FILE" ] || [ ! -s "$TOKENS_FILE" ] || ! jq empty "$TOKENS_FILE" 2>/dev/null; then
     cat > "$TOKENS_FILE" << 'JSONEOF'
 {
   "total_input_tokens": 0,

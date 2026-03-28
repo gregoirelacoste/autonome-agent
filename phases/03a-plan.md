@@ -1,9 +1,11 @@
 PLANIFICATION DE LA FEATURE : {{FEATURE_NAME}}
 
-Avant de coder, produis un plan concis. Le contexte projet (INDEX.md + auto-map.md) est injecté ci-dessus.
-Lis aussi la spec de cette feature dans .orc/ROADMAP.md.
+Le contexte projet (INDEX.md + auto-map.md) est injecté ci-dessus.
 
-Puis écris un plan dans .orc/logs/plan-{{N}}.md avec ce format exact :
+**PRIORITÉ ABSOLUE : écris d'abord le fichier plan, puis lis si tu as besoin de détails.**
+
+Étape 1 — Lis la spec de cette feature dans .orc/ROADMAP.md (1 lecture max).
+Étape 2 — Écris immédiatement le plan dans .orc/logs/plan-{{N}}.md avec ce format :
 
 ## Plan : {{FEATURE_NAME}}
 
@@ -24,7 +26,10 @@ Puis écris un plan dans .orc/logs/plan-{{N}}.md avec ce format exact :
 ### Risques identifiés
 - [risque potentiel et mitigation]
 
+Étape 3 — Seulement si nécessaire après avoir écrit le plan : lis 1-2 fichiers existants pour affiner.
+
 RÈGLES :
 - Max 20 lignes de plan. Sois concis et actionnable.
 - Ne crée PAS de code. Uniquement le plan.
 - Si un module existant couvre déjà le besoin, note "réutiliser X" au lieu de créer.
+- Le plan doit exister dans le fichier avant la fin — c'est l'unique livrable de cette phase.
