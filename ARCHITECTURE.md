@@ -661,7 +661,7 @@ adaptatif des turns.
 | Risque | Protection |
 |---|---|
 | Boucle infinie de fix | `MAX_FIX_ATTEMPTS` + détection de boucle (`error_hash`) + abandon à 3x même erreur |
-| Roadmap infinie | `MAX_FEATURES` + `MAX_EVOLVE_CYCLES` + DONE.md |
+| Roadmap infinie | `MAX_FEATURES` + `MAX_EVOLVE_CYCLES` + score maturité /30 (>= 24 → DONE) |
 | IA ajoute trop de features | `MAX_AI_ROADMAP_ADDS` force une pause humaine |
 | CLAUDE.md trop long | Nettoyage forcé à chaque méta-rétro |
 | Recherche sans fin | Max turns par phase de recherche |
@@ -670,7 +670,9 @@ adaptatif des turns.
 | Dérive vs vision | BRIEF.md immuable, vérifié aux méta-rétros + evolve |
 | Coût tokens | Budget prédictif + post-hoc (`MAX_BUDGET_USD`) + `adaptive_max_turns` |
 | Claude bloqué (stall) | `STALL_KILL_THRESHOLD` kill auto après N checks sans données |
-| Régression qualité | Tests E2E + `QUALITY_COMMAND` + `FUNCTIONAL_CHECK_COMMAND` |
+| Régression qualité | Tests E2E + `QUALITY_COMMAND` + `FUNCTIONAL_CHECK_COMMAND` + acceptance epic |
+| Dette technique accumulée | Phase tech-debt auto quand >30% d'échecs (refactoring ciblé, max 5) |
+| Brief incomplet/ambigu | Brief scoring /25 en phase strategy — hypothèses ajoutées si < 15 |
 | Auto-modification destructive | Git versionne tout, rollback possible |
 | Hallucination de sources | Règle : URL exacte + cross-validation 2 sources |
 | Absence de l'humain | `PAUSE_EVERY_N_FEATURES` + signaux file-based + notifications |

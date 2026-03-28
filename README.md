@@ -213,7 +213,9 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
                                     Repriorisation
                                            │
                                            ▼
-                                    Nouvelle itération...
+                                    EVOLVE (maturité /30)
+                                    >= 24 → DONE + deploy
+                                    < 24  → nouvelles features
 ```
 
 L'agent améliore ses propres outils au fil du projet :
