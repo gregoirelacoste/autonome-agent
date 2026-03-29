@@ -124,6 +124,7 @@ declare -A PHASE_TIMEOUTS=(
   ["self-improve"]=300      # 5min  — auto-amélioration
   ["strategy"]=300          # 5min  — génération roadmap
   ["evolve"]=300            # 5min  — évolution roadmap
+  ["auto-brainstorm"]=600  # 10min — brainstorm auto (recherche + tickets)
   ["alignment"]=120         # 2min  — rapport d'alignement
   ["research-initial"]=600  # 10min — recherche web
   ["research-epic"]=300     # 5min  — veille ciblée

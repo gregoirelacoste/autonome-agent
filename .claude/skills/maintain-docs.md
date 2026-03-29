@@ -35,11 +35,14 @@ Pour chaque changement, identifie **précisément** quels documents sont impact�
 | Nouvelle commande CLI | `docs/commands-reference.md` + `orc.sh` (help) + `README.md` |
 | Nouveau flag/option | `docs/commands-reference.md` + doc spécifique + `README.md` si majeur |
 | Nouveau mode d'init | `docs/init-modes.md` + `docs/getting-started.md` |
-| Changement config | `docs/configuration.md` + `codebase/config-params.md` |
+| Changement config | `docs/configuration.md` + `codebase/config-params.md` + `config.default.sh` |
 | Changement GitHub | `docs/github-integration.md` |
 | Changement contrôle humain | `docs/human-controls.md` |
 | Bug fréquent résolu | `docs/faq.md` (section troubleshooting) |
 | Nouvelle phase/skill | `codebase/phases.md` ou `codebase/skills.md` + `CLAUDE.md` |
+| Changement orchestrateur | `ARCHITECTURE.md` + `codebase/functions.md` + `CLAUDE.md` |
+| Changement roadmap/kanban | `docs/commands-reference.md` + `docs/human-controls.md` + `CLAUDE.md` |
+| Nouvelle phase dans le run | `ARCHITECTURE.md` + `codebase/phases.md` + `config.default.sh` (PHASE_TIMEOUTS) |
 
 ### Étape 3 — Mettre à jour
 
@@ -60,11 +63,16 @@ Pour **chaque** document impacté :
 
 Vérifie que :
 - [ ] Le README mentionne les nouvelles fonctionnalités majeures
-- [ ] Le help CLI (`orc help`) liste les nouvelles commandes
+- [ ] Le help CLI (`orc_help()` dans `orc.sh`) liste les nouvelles commandes et raccourcis
+- [ ] Les raccourcis dans `orc.sh` (ligne "Raccourcis : ...") sont à jour
 - [ ] Les docs de détail sont cohérentes entre elles
 - [ ] Les chemins de fichiers dans les docs existent
 - [ ] La version dans `docs/INDEX.md` est à jour
 - [ ] `CLAUDE.md` reflète les nouveaux patterns/conventions
+- [ ] `ARCHITECTURE.md` reflète les changements de flux et de phases
+- [ ] `codebase/functions.md` documente les nouvelles fonctions
+- [ ] `codebase/config-params.md` documente les nouveaux paramètres
+- [ ] `config.default.sh` PHASE_TIMEOUTS inclut les nouvelles phases
 
 ## Structure des docs
 

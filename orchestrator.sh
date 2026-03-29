@@ -2822,8 +2822,15 @@ migrate_to_kanban() {
   local roadmap="$PROJECT_DIR/.orc/ROADMAP.md"
   local kanban_dir="$PROJECT_DIR/.orc/roadmap"
 
-  # Déjà migré ? (un des sous-dossiers existe avec du contenu, ou le dossier todo existe)
-  if [ -d "$kanban_dir/todo" ] || [ -d "$kanban_dir/done" ]; then
+  # Déjà migré ? Vérifier qu'il y a de vrais tickets (pas juste des dossiers vides)
+  local has_tickets=false
+  for _d in "$kanban_dir"/*/; do
+    [ -d "$_d" ] || continue
+    for _f in "$_d"*.md; do
+      [ -f "$_f" ] && { has_tickets=true; break 2; }
+    done
+  done
+  if [ "$has_tickets" = true ]; then
     return 0
   fi
 
@@ -2939,6 +2946,7 @@ fi
 if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
   workflow_transition "bootstrap"
   log PHASE "PHASE 0 — BOOTSTRAP"
+  update_phase_tracking "bootstrap" ""
 
   if [ ! -d "$PROJECT_DIR/.git" ]; then
     mkdir -p "$PROJECT_DIR"
@@ -3013,6 +3021,7 @@ fi
 if [ "$ENABLE_RESEARCH" = true ] && [ ! -f "$PROJECT_DIR/.orc/research/INDEX.md" ]; then
   workflow_transition "research"
   log PHASE "PHASE 1 — RECHERCHE INITIALE"
+  update_phase_tracking "research-initial" ""
 
   local_prompt=$(render_phase "01-research.md")
   run_claude "$local_prompt" "$MAX_TURNS_RESEARCH_INITIAL" "$LOG_DIR/01-research.log" "research-initial"
@@ -3027,6 +3036,7 @@ fi
 if [ "$SKIP_TO_POST_PROJECT" != true ] && ! has_todo_tickets && ! grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
   workflow_transition "strategy"
   log PHASE "PHASE 2 — STRATÉGIE"
+  update_phase_tracking "strategy" ""
 
   # Initialiser le kanban pour que la strategy écrive directement des tickets
   init_kanban
@@ -3115,7 +3125,8 @@ while [ $FEATURE_COUNT -lt $MAX_FEATURES ]; do
 
   # --- Veille ciblée avant chaque epic ---
   if [ "$ENABLE_RESEARCH" = true ] && [ "$EPIC_FEATURE_COUNT" -eq 1 ]; then
-    log INFO "Veille ciblée avant l'epic..."
+    log PHASE "RESEARCH-EPIC — $feature_name"
+    update_phase_tracking "research-epic" "$feature_name"
     run_claude "$(cat <<EOF
 VEILLE CIBLÉE avant la feature : $feature_name
 
@@ -3146,7 +3157,7 @@ EOF
     # Challenger synchrone si pas de lookahead (feature 1 ou reprise après crash)
     if [ ! -f "$challenger_file" ]; then
       update_phase_tracking "challenger" "$feature_name"
-      log INFO "Challenge de la feature en cours..."
+      log PHASE "CHALLENGER — $feature_name"
       challenger_prompt=$(render_phase "03c-challenger.md" \
         "FEATURE_NAME=$feature_name" \
         "N=$FEATURE_COUNT")
@@ -3161,7 +3172,7 @@ EOF
 
   # --- Planification rapide (modèle léger, avant implement) ---
   update_phase_tracking "plan" "$feature_name"
-  log INFO "Planification en cours..."
+  log PHASE "PLAN — $feature_name"
   plan_prompt=$(render_phase "03a-plan.md" \
     "FEATURE_NAME=$feature_name" \
     "N=$FEATURE_COUNT")
@@ -3195,7 +3206,7 @@ $(cat "$challenger_file")"
   plan_file="$PROJECT_DIR/.orc/logs/plan-$FEATURE_COUNT.md"
 
   # --- Implémentation (avec human notes + feedback + contexte adaptatif) ---
-  log INFO "Implémentation en cours..."
+  log PHASE "IMPLEMENT — $feature_name"
   impl_prompt=$(render_phase "03-implement.md" \
     "FEATURE_NAME=$feature_name" \
     "FEATURE_BRANCH=$feature_branch")
@@ -3295,7 +3306,8 @@ $challenger_enrichments"
 
   # --- Lint (rapide, avant les tests) ---
   if [ -n "${LINT_COMMAND:-}" ]; then
-    log INFO "Lint en cours..."
+    log PHASE "LINT — $feature_name"
+    update_phase_tracking "lint" "$feature_name"
     LINT_OUTPUT=$(run_in_project "$LINT_COMMAND 2>&1") && LINT_EXIT=0 || LINT_EXIT=$?
     if [ $LINT_EXIT -ne 0 ]; then
       log WARN "Lint échoué — correction rapide avant les tests..."
@@ -3307,7 +3319,7 @@ OUTPUT :
 $(smart_truncate "$LINT_OUTPUT" 2000)
 
 Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/style." \
-        10 "$LOG_DIR/feature-$FEATURE_COUNT-lint.log" "fix" "$feature_name" || true
+        10 "$LOG_DIR/feature-$FEATURE_COUNT-lint.log" "lint" "$feature_name" || true
     else
       log INFO "Lint OK."
     fi
@@ -3319,7 +3331,7 @@ Corrige les erreurs de lint. Ne change PAS la logique, uniquement le formatage/s
 
   if [ "$changed_files_count" -ge 3 ]; then
     update_phase_tracking "critic" "$feature_name"
-    log INFO "Review adversariale en cours ($changed_files_count fichiers modifiés)..."
+    log PHASE "CRITIC — $feature_name ($changed_files_count fichiers)"
     critic_prompt=$(render_phase "03b-critic.md" "FEATURE_NAME=$feature_name")
     critic_system='Tu es un REVIEWER SENIOR sceptique et méticuleux. Tu n'\''as PAS écrit ce code — un autre développeur l'\''a fait. Ton seul objectif est de trouver les bugs, failles et problèmes AVANT que ça parte en production. Tu es payé pour casser, pas pour complimenter. Sois direct et factuel.'
     run_claude "$critic_prompt" 10 "$LOG_DIR/feature-$FEATURE_COUNT-critic.log" "critic" "$feature_name" "$critic_system" || {
@@ -3494,8 +3506,8 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
   if [ "${ENABLE_PRODUCT_REVIEW:-true}" = true ] && [ "$tests_passed" = true ]; then
     local product_review_file="$PROJECT_DIR/.orc/logs/product-review-$FEATURE_COUNT.md"
     if [ ! -f "$product_review_file" ]; then
+      log PHASE "PRODUCT-REVIEW — $feature_name"
       update_phase_tracking "product-review" "$feature_name"
-      log INFO "Review produit en cours..."
       local pr_prompt
       pr_prompt=$(render_phase "04d-product-review.md" \
         "FEATURE_NAME=$feature_name" \
@@ -3517,8 +3529,8 @@ $(cat "$challenger_file")"
   fi
 
   # --- Reflect & Evolve ---
+  log PHASE "REFLECT — $feature_name"
   update_phase_tracking "reflect" "$feature_name"
-  log INFO "Rétrospective..."
 
   # Métriques bash pré-calculées (évite que Claude perde des turns à les collecter)
   files_changed=""; lines_added=""; lines_deleted=""
@@ -3548,7 +3560,8 @@ MÉTRIQUES (pré-calculées, pas besoin de les recalculer) :
 
   # --- Quality Gate (post-tests, pré-merge) ---
   if [ "$tests_passed" = true ] && [ -n "${QUALITY_COMMAND:-}" ]; then
-    log INFO "Quality gate en cours..."
+    log PHASE "QUALITY — $feature_name"
+    update_phase_tracking "quality" "$feature_name"
     quality_output=$(run_in_project "$QUALITY_COMMAND 2>&1") && quality_exit=0 || quality_exit=$?
 
     if [ $quality_exit -ne 0 ]; then
@@ -3724,6 +3737,7 @@ Garde le README concis et à jour. Ne réécris pas tout — édite seulement ce
   # --- Méta-rétrospective toutes les N features ---
   if [ $((FEATURE_COUNT % META_RETRO_FREQUENCY)) -eq 0 ]; then
     log PHASE "MÉTA-RÉTROSPECTIVE — $FEATURE_COUNT features"
+    update_phase_tracking "meta-retro" ""
     retro_prompt=$(render_phase "06-meta-retro.md" "FEATURE_COUNT=$FEATURE_COUNT")
     run_claude "$retro_prompt" "$MAX_TURNS_RESEARCH_TREND" "$LOG_DIR/meta-retro-$FEATURE_COUNT.log" "meta-retro" || {
       log WARN "Méta-rétrospective échouée — on continue."
@@ -3768,6 +3782,7 @@ if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
     MAIN_LOOP_CONTINUE=false
   else
     log PHASE "PHASE FINALE — ÉVOLUTION (cycle $EVOLVE_CYCLES)"
+    update_phase_tracking "evolve" "cycle-$EVOLVE_CYCLES"
 
     # Phase 1 : Score de maturité (evolve classique — décide DONE ou continue)
     evolve_prompt=$(render_phase "07-evolve.md")
@@ -3807,6 +3822,7 @@ if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
       # --- Checkpoint d'alignement entre cycles ---
       if [ "${ALIGNMENT_CHECK:-true}" = true ]; then
         log PHASE "CHECKPOINT D'ALIGNEMENT — Cycle $EVOLVE_CYCLES"
+        update_phase_tracking "alignment" "cycle-$EVOLVE_CYCLES"
 
         # Générer le rapport d'alignement via Claude
         alignment_prompt=$(render_phase "07b-alignment.md" "CYCLE=$EVOLVE_CYCLES")
