@@ -143,7 +143,7 @@ LIGHT_PHASES="plan acceptance reflection reflect self-improve meta-retro quality
 
 # Phases fortes qui utilisent CLAUDE_MODEL_STRONG si disponible
 # Réflexion profonde : challenger (enrichissement produit pré-implémentation)
-STRONG_PHASES="challenger"
+STRONG_PHASES="challenger product-review"
 
 # Résoudre le modèle effectif pour une phase donnée
 # Hiérarchie : STRONG (challenger) > CLAUDE_MODEL (implement, fix) > LIGHT (plan, reflect)
@@ -840,6 +840,36 @@ ${roadmap_todo:-[aucune]}
 
 INSIGHTS MARCHÉ :
 ${research_content:-[pas de recherche]}"
+      ;;
+    product-review)
+      # Pré-injecter BRIEF + diff + challenger pour évaluation produit post-implémentation
+      local brief_content_pr="" diff_content="" challenger_content=""
+      brief_content_pr=$(head -100 "$PROJECT_DIR/.orc/BRIEF.md" 2>/dev/null || true)
+      diff_content=$(run_in_project "git diff main...HEAD --stat 2>/dev/null" || true)
+      local _pr_n="${feature_name:-}"
+      # Trouver le N du feature count courant via le log le plus récent
+      local _pr_challenger_file=""
+      for f in "$PROJECT_DIR"/.orc/logs/challenger-*.md; do
+        [ -f "$f" ] && _pr_challenger_file="$f"
+      done
+      if [ -n "$_pr_challenger_file" ]; then
+        challenger_content=$(cat "$_pr_challenger_file" 2>/dev/null || true)
+      fi
+      local roadmap_done_pr=""
+      roadmap_done_pr=$(grep '^\- \[x\]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null | tail -10 || true)
+
+      context_hint="
+BRIEF PRODUIT :
+${brief_content_pr:-[brief non disponible]}
+
+FEATURES DÉJÀ LIVRÉES :
+${roadmap_done_pr:-[aucune encore]}
+
+DIFF DE CETTE FEATURE (fichiers modifiés) :
+${diff_content:-[pas de diff]}
+
+ENRICHISSEMENTS DU CHALLENGER (ce qui était attendu) :
+${challenger_content:-[pas de challenger]}"
       ;;
     plan)
       context_hint="
@@ -3060,6 +3090,32 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
           fi
         fi
       fi
+    fi
+  fi
+
+  # --- Product Review (autocritique métier post-implémentation) ---
+  if [ "${ENABLE_PRODUCT_REVIEW:-true}" = true ] && [ "$tests_passed" = true ]; then
+    local product_review_file="$PROJECT_DIR/.orc/logs/product-review-$FEATURE_COUNT.md"
+    if [ ! -f "$product_review_file" ]; then
+      update_phase_tracking "product-review" "$feature_name"
+      log INFO "Review produit en cours..."
+      local pr_prompt
+      pr_prompt=$(render_phase "04d-product-review.md" \
+        "FEATURE_NAME=$feature_name" \
+        "N=$FEATURE_COUNT")
+      # Injecter le challenger pour comparer attendu vs réalisé
+      if [ -f "${challenger_file:-}" ]; then
+        pr_prompt="$pr_prompt
+
+CE QUE LE CHALLENGER ATTENDAIT (comparer avec ce qui a été implémenté) :
+$(cat "$challenger_file")"
+      fi
+      run_claude "$pr_prompt" "${MAX_TURNS_PRODUCT_REVIEW:-5}" \
+        "$LOG_DIR/feature-$FEATURE_COUNT-product-review.log" "product-review" "$feature_name" || {
+        log WARN "Product review échouée — on continue."
+      }
+    else
+      log INFO "Product review déjà exécutée (reprise) — skip."
     fi
   fi
 

@@ -92,6 +92,13 @@ ENABLE_CHALLENGER=true                   # Challenger chaque feature avant plan 
                                          # false = skip directement au plan
 MAX_TURNS_CHALLENGER=3                   # Turns pour le challenger (contexte pré-injecté → 1-2 suffisent)
 
+# === PRODUCT REVIEW (autocritique métier post-implémentation) ===
+ENABLE_PRODUCT_REVIEW=true               # Review produit après chaque feature (modèle fort)
+                                         # Vérifie la valeur livrée, l'UX, l'adéquation au brief
+                                         # Applique max 3 quick wins cosmétiques (libellés, messages, états)
+                                         # false = skip, passe directement à reflect
+MAX_TURNS_PRODUCT_REVIEW=5               # Turns pour la review produit (analyse + quick wins éventuels)
+
 # === BUDGET ===
 MAX_BUDGET_USD="200.00"                  # Budget max en USD. Garde-fou par défaut. Ajuster selon le projet.
                                          # Budget prédictif : refuse de lancer si le coût estimé dépasse le restant.
@@ -105,6 +112,7 @@ STALL_KILL_THRESHOLD=60                  # Nombre de checks sans données avant 
 # Ajuster selon vos besoins. Commenter pour tout ramener à CLAUDE_TIMEOUT.
 declare -A PHASE_TIMEOUTS=(
   ["challenger"]=120        # 2min  — challenge feature (analyse produit, pas code)
+  ["product-review"]=180   # 3min  — review produit post-feature (analyse + quick wins)
   ["plan"]=120              # 2min  — planification rapide
   ["critic"]=600            # 10min — review adversariale (modèle principal, 10 turns)
   ["reflect"]=180           # 3min  — rétrospective feature

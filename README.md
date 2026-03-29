@@ -93,6 +93,7 @@ Les paramètres clés :
 | `CLAUDE_MODEL_LIGHT` | `claude-haiku-4-5` | Modèle léger (plan, reflect, research) |
 | `CLAUDE_MODEL_STRONG` | `claude-opus-4-6` | Modèle fort (challenger) |
 | `ENABLE_CHALLENGER` | `true` | Enrichissement produit avant chaque feature |
+| `ENABLE_PRODUCT_REVIEW` | `true` | Autocritique métier après chaque feature |
 | `STALL_KILL_THRESHOLD` | 60 | Checks sans données avant kill auto (x5s) |
 
 Voir `config.default.sh` pour la liste complète.
@@ -204,6 +205,7 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
                                     │ Lint             │
                                     │ Critic (review)  │
                                     │ Tests & Fix      │
+                                    │ Product Review   │
                                     │ Acceptance (epic) │
                                     │ Tech-Debt (>30%) │
                                     │ Reflect          │
