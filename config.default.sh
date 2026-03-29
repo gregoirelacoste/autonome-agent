@@ -83,9 +83,8 @@ CLAUDE_MODEL=""                          # Modèle principal (implement, fix). E
                                          # Vide = modèle par défaut de la CLI.
 CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger pour phases simples (plan, critic, reflect, research, etc.)
                                          # Économise ~35-45% du budget total. Vide = utilise CLAUDE_MODEL.
-CLAUDE_MODEL_STRONG=""                   # Modèle fort pour phases de réflexion profonde (challenger)
-                                         # Ex: "claude-opus-4-6-20250514". Vide = utilise CLAUDE_MODEL.
-                                         # Hiérarchie : STRONG > CLAUDE_MODEL > LIGHT.
+CLAUDE_MODEL_STRONG="claude-opus-4-6-20250514"  # Modèle fort pour phases de réflexion profonde (challenger)
+                                         # Vide = utilise CLAUDE_MODEL. Hiérarchie : STRONG > CLAUDE_MODEL > LIGHT.
 
 # === CHALLENGER (enrichissement feature pré-implémentation) ===
 ENABLE_CHALLENGER=true                   # Challenger chaque feature avant plan (modèle fort)

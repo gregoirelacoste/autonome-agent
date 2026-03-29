@@ -1229,6 +1229,7 @@ run_challenger_async() {
 
   (
     # Subshell : CLAUDE_PID, TMP_JSON etc. sont isolés du parent
+    local cost_before="$TOTAL_COST_USD"
     local challenger_prompt
     challenger_prompt=$(render_phase "03c-challenger.md" \
       "FEATURE_NAME=$feat_name" \
@@ -1236,8 +1237,10 @@ run_challenger_async() {
     run_claude "$challenger_prompt" "${MAX_TURNS_CHALLENGER:-3}" \
       "$LOG_DIR/feature-$feat_count-challenger.log" "challenger" "$feat_name" || true
 
-    # Exporter le coût de la subshell pour le parent
-    printf "%s" "$TOTAL_COST_USD" > "$cost_file"
+    # Exporter le DELTA de coût (pas le total) pour le parent
+    local delta
+    delta=$(awk "BEGIN { printf \"%.6f\", $TOTAL_COST_USD - $cost_before }")
+    printf "%s" "$delta" > "$cost_file"
   )
 }
 
@@ -1246,14 +1249,13 @@ collect_challenger_cost() {
   local feat_count="$1"
   local cost_file="$PROJECT_DIR/.orc/logs/.challenger-cost-$feat_count"
   if [ -f "$cost_file" ]; then
-    local sub_cost
-    sub_cost=$(cat "$cost_file" 2>/dev/null || echo "0")
-    # Le coût de la subshell est le TOTAL (base = copie du parent au fork)
-    # Différence = sub_cost - TOTAL_COST_USD au moment du fork
-    # Simplification : on re-parse le log du challenger pour le coût exact
-    # Pour l'instant, on laisse track_tokens gérer via le log file
+    local delta_cost
+    delta_cost=$(cat "$cost_file" 2>/dev/null || echo "0")
+    if [ -n "$delta_cost" ] && [ "$delta_cost" != "0" ]; then
+      TOTAL_COST_USD=$(awk "BEGIN { printf \"%.6f\", $TOTAL_COST_USD + $delta_cost }")
+      log INFO "Coût challenger async intégré : +\$$delta_cost (total: \$$TOTAL_COST_USD)"
+    fi
     rm -f "$cost_file"
-    log INFO "Coût challenger async récupéré."
   fi
 }
 
@@ -2835,7 +2837,7 @@ $alignment_response"
   # Injecter seulement les enrichissements immédiats du challenger (pas les idées futures)
   if [ -f "${challenger_file:-}" ]; then
     local challenger_enrichments=""
-    challenger_enrichments=$(sed -n '/### Enrichissements immédiats/,/### /p' "$challenger_file" 2>/dev/null | head -15 || true)
+    challenger_enrichments=$(sed -n '/### Enrichissements immédiats/,/^### [^E]/{ /^### [^E]/d; p; }' "$challenger_file" 2>/dev/null | head -15 || true)
     if [ -n "$challenger_enrichments" ]; then
       impl_prompt="$impl_prompt
 
