@@ -66,10 +66,10 @@ get_run_status() {
   local dir
   dir=$(project_dir "$name")
 
-  if [ -f "$dir/DONE.md" ]; then
-    echo "terminé|$GREEN"
-  elif is_running "$name"; then
+  if is_running "$name"; then
     echo "en cours|$CYAN"
+  elif [ -f "$dir/DONE.md" ]; then
+    echo "terminé|$GREEN"
   elif [ -f "$dir/.orc/state.json" ] && command -v jq &>/dev/null; then
     local saved_status
     saved_status=$(jq -r '.run_status // ""' "$dir/.orc/state.json" 2>/dev/null)
