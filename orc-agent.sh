@@ -1456,8 +1456,15 @@ cmd_project_roadmap() {
   local dir
   dir=$(project_dir "$name")
 
-  # Kanban ? Si le dossier .orc/roadmap/ existe avec du contenu
-  if [ -d "$dir/.orc/roadmap/todo" ] || [ -d "$dir/.orc/roadmap/done" ]; then
+  # Kanban ? Si le dossier .orc/roadmap/ contient des tickets
+  local has_kanban_tickets=false
+  for _kdir in "$dir/.orc/roadmap"/*/; do
+    [ -d "$_kdir" ] || continue
+    for _kf in "$_kdir"*.md; do
+      [ -f "$_kf" ] && { has_kanban_tickets=true; break 2; }
+    done
+  done
+  if [ "$has_kanban_tickets" = true ]; then
     kanban_display "$dir" "$name" "$verbosity"
     return
   fi
@@ -2010,8 +2017,9 @@ ${skill_content}"
 
       # Lancer Claude en one-shot avec le skill
       local output
-      output=$(cd "$ORC_DIR" && claude -p \
+      output=$(cd "$ORC_DIR" && timeout 300 claude -p \
         --model claude-sonnet-4-6 \
+        --max-turns 15 \
         --dangerously-skip-permissions \
         --append-system-prompt "$watch_prompt" \
         "Vérifie le projet '${name}' maintenant. Projet dir: ${dir}" \
