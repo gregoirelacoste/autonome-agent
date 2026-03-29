@@ -3178,7 +3178,6 @@ EOF
     "N=$FEATURE_COUNT")
   # Injecter le contenu détaillé du ticket kanban dans le plan
   if [ -n "$current_ticket" ] && [ -f "$current_ticket" ]; then
-    local ticket_specs
     ticket_specs=$(ticket_context "$current_ticket")
     if [ -n "$ticket_specs" ]; then
       plan_prompt="$plan_prompt
@@ -3213,7 +3212,6 @@ $(cat "$challenger_file")"
 
   # Injecter le contenu détaillé du ticket kanban dans l'implémentation
   if [ -n "$current_ticket" ] && [ -f "$current_ticket" ]; then
-    local ticket_specs
     ticket_specs=$(ticket_context "$current_ticket")
     if [ -n "$ticket_specs" ]; then
       impl_prompt="$impl_prompt
