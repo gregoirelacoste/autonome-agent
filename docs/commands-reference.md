@@ -181,7 +181,7 @@ Affiche le modèle Claude actuel avec les tarifs. Avec `set` : change le modèle
 
 ```bash
 orc admin model
-orc admin model set claude-sonnet-4-6-20250514
+orc admin model set claude-sonnet-4-6
 ```
 
 ### `orc admin budget`

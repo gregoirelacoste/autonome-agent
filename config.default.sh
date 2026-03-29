@@ -79,11 +79,11 @@ FUNCTIONAL_CHECK_COMMAND=""              # Vérification fonctionnelle post-feat
                                          # L'app DOIT être fonctionnelle après chaque feature.
                                          # Ex: "npm start -- --check" ou "curl -sf http://localhost:3000/health"
                                          # ou "docker compose up -d && sleep 5 && curl -sf localhost:3000 && docker compose down"
-CLAUDE_MODEL=""                          # Modèle principal (implement, fix). Ex: "claude-sonnet-4-6-20250514"
+CLAUDE_MODEL=""                          # Modèle principal (implement, fix). Ex: "claude-sonnet-4-6"
                                          # Vide = modèle par défaut de la CLI.
-CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger pour phases simples (plan, critic, reflect, research, etc.)
+CLAUDE_MODEL_LIGHT="claude-haiku-4-5"  # Modèle léger pour phases simples (plan, critic, reflect, research, etc.)
                                          # Économise ~35-45% du budget total. Vide = utilise CLAUDE_MODEL.
-CLAUDE_MODEL_STRONG="claude-opus-4-6-20250514"  # Modèle fort pour phases de réflexion profonde (challenger)
+CLAUDE_MODEL_STRONG="claude-opus-4-6"  # Modèle fort pour phases de réflexion profonde (challenger)
                                          # Vide = utilise CLAUDE_MODEL. Hiérarchie : STRONG > CLAUDE_MODEL > LIGHT.
 
 # === CHALLENGER (enrichissement feature pré-implémentation) ===

@@ -376,8 +376,8 @@ MAX_BUDGET_USD="200.00"         # Budget max en USD (prédictif + post-hoc)
 
 # === MODÈLES (adaptatifs) ===
 CLAUDE_MODEL=""                 # Modèle principal (implement, fix, critic). Vide = défaut CLI
-CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger (plan, reflect, research)
-CLAUDE_MODEL_STRONG="claude-opus-4-6-20250514"  # Modèle fort (challenger)
+CLAUDE_MODEL_LIGHT="claude-haiku-4-5"  # Modèle léger (plan, reflect, research)
+CLAUDE_MODEL_STRONG="claude-opus-4-6"  # Modèle fort (challenger)
                                 # resolve_model() : STRONG > CLAUDE_MODEL > LIGHT
                                 # MODEL_PRICING[] contient les tarifs par préfixe de modèle
 

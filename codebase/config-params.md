@@ -43,8 +43,8 @@ Migration auto : migrate_config() ajoute les paramètres manquants au démarrage
 
 ## Modèles
 - `CLAUDE_MODEL=""` — modèle principal (implement, fix). Vide = défaut CLI
-- `CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"` — modèle léger (plan, reflect, research, etc.)
-- `CLAUDE_MODEL_STRONG="claude-opus-4-6-20250514"` — modèle fort (challenger). Vide = CLAUDE_MODEL
+- `CLAUDE_MODEL_LIGHT="claude-haiku-4-5"` — modèle léger (plan, reflect, research, etc.)
+- `CLAUDE_MODEL_STRONG="claude-opus-4-6"` — modèle fort (challenger). Vide = CLAUDE_MODEL
 
 ## Challenger
 - `ENABLE_CHALLENGER=true` — activer la phase challenger (enrichissement produit pré-implémentation)

@@ -283,7 +283,7 @@ L'orchestrateur détecte l'état existant et reprend automatiquement (`orc agent
 Oui. Éditer les fichiers dans `~/projects/mon-projet/phases/`. Chaque phase est un prompt Markdown avec des placeholders `{{VAR}}`.
 
 **Changer de modèle Claude ?**
-`orc admin model set claude-sonnet-4-6-20250514` — appliqué aux prochains lancements.
+`orc admin model set claude-sonnet-4-6` — appliqué aux prochains lancements.
 
 ## Documentation
 

@@ -111,9 +111,9 @@ admin_model() {
       fi
       echo ""
       printf "  ${BOLD}Modèles disponibles :${NC}\n"
-      printf "  ${CYAN}claude-sonnet-4-6-20250514${NC}  — Rapide, économique (recommandé)\n"
-      printf "  ${CYAN}claude-opus-4-6-20250514${NC}   — Plus capable, plus cher\n"
-      printf "  ${CYAN}claude-haiku-4-5-20251001${NC}  — Ultra-rapide, très économique\n"
+      printf "  ${CYAN}claude-sonnet-4-6${NC}  — Rapide, économique (recommandé)\n"
+      printf "  ${CYAN}claude-opus-4-6${NC}   — Plus capable, plus cher\n"
+      printf "  ${CYAN}claude-haiku-4-5${NC}  — Ultra-rapide, très économique\n"
       echo ""
       printf "  ${BOLD}Tarifs API (par million de tokens) :${NC}\n"
       printf "  %-30s ${DIM}Input       Output${NC}\n" ""

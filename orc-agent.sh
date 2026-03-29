@@ -2017,7 +2017,7 @@ ${skill_content}"
       # Lancer Claude en one-shot avec le skill
       local output
       output=$(cd "$ORC_DIR" && claude -p \
-        --model claude-sonnet-4-6-20250514 \
+        --model claude-sonnet-4-6 \
         --dangerously-skip-permissions \
         --append-system-prompt "$watch_prompt" \
         "Vérifie le projet '${name}' maintenant. Projet dir: ${dir}" \

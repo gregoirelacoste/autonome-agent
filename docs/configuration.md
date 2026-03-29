@@ -81,8 +81,8 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 | Paramètre | Défaut | Description |
 |---|---|---|
 | `CLAUDE_MODEL` | *(vide = défaut CLI)* | Modèle principal (implement, fix) |
-| `CLAUDE_MODEL_LIGHT` | `claude-haiku-4-5-20251001` | Modèle léger (plan, reflect, research, etc.) |
-| `CLAUDE_MODEL_STRONG` | `claude-opus-4-6-20250514` | Modèle fort (challenger). Vide = `CLAUDE_MODEL` |
+| `CLAUDE_MODEL_LIGHT` | `claude-haiku-4-5` | Modèle léger (plan, reflect, research, etc.) |
+| `CLAUDE_MODEL_STRONG` | `claude-opus-4-6` | Modèle fort (challenger). Vide = `CLAUDE_MODEL` |
 
 ### Challenger (enrichissement pré-implémentation)
 
@@ -179,7 +179,7 @@ Voir [github-integration.md](github-integration.md) pour le détail.
 vim ~/projects/mon-projet/.orc/config.sh
 
 # Ou via la CLI (config globale)
-orc admin config set CLAUDE_MODEL claude-sonnet-4-6-20250514
+orc admin config set CLAUDE_MODEL claude-sonnet-4-6
 ```
 
 Les changements sont pris en compte au prochain lancement de l'orchestrateur (ou au restart). Les nouveaux paramètres sont migrés automatiquement au démarrage.

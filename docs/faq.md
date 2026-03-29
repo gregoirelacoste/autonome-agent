@@ -29,7 +29,7 @@ L'orchestrateur détecte l'état existant (`.orc/state.json`) et reprend là où
 ### Comment changer de modèle Claude ?
 
 ```bash
-orc admin model set claude-sonnet-4-6-20250514
+orc admin model set claude-sonnet-4-6
 ```
 
 Appliqué aux prochains lancements.
