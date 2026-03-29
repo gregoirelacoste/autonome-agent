@@ -44,6 +44,11 @@ Migration auto : migrate_config() ajoute les paramètres manquants au démarrage
 ## Modèles
 - `CLAUDE_MODEL=""` — modèle principal (implement, fix). Vide = défaut CLI
 - `CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"` — modèle léger (plan, reflect, research, etc.)
+- `CLAUDE_MODEL_STRONG="claude-opus-4-6-20250514"` — modèle fort (challenger). Vide = CLAUDE_MODEL
+
+## Challenger
+- `ENABLE_CHALLENGER=true` — activer la phase challenger (enrichissement produit pré-implémentation)
+- `MAX_TURNS_CHALLENGER=3` — budget turns du challenger (contexte pré-injecté → 1-2 suffisent)
 
 ## Budget
 - `MAX_BUDGET_USD="200.00"` — budget max en USD (garde-fou prédictif + post-hoc)

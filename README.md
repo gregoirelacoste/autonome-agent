@@ -91,6 +91,8 @@ Les paramètres clés :
 | `DEPLOY_COMMAND` | *(vide)* | Déploiement auto en fin de projet |
 | `CLAUDE_MODEL` | *(défaut CLI)* | Modèle principal (implement, fix, critic) |
 | `CLAUDE_MODEL_LIGHT` | `claude-haiku-4-5` | Modèle léger (plan, reflect, research) |
+| `CLAUDE_MODEL_STRONG` | `claude-opus-4-6` | Modèle fort (challenger) |
+| `ENABLE_CHALLENGER` | `true` | Enrichissement produit avant chaque feature |
 | `STALL_KILL_THRESHOLD` | 60 | Checks sans données avant kill auto (x5s) |
 
 Voir `config.default.sh` pour la liste complète.
@@ -196,6 +198,7 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
                                     │   BOUCLE x N     │
                                     │                  │
                                     │ Veille ciblée    │
+                                    │ Challenger (Opus)│
                                     │ Plan (micro)     │
                                     │ Implement        │
                                     │ Lint             │

@@ -21,10 +21,22 @@
 - Guard : skip si ROADMAP a des items non cochés
 - Modèle : léger
 
+## Phase 03c — Challenger (phases/03c-challenger.md)
+- Placeholders : {{FEATURE_NAME}}, {{N}}
+- Crée : .orc/logs/challenger-N.md (enrichissements immédiats + idées futures)
+- Max 3 turns, modèle fort (`CLAUDE_MODEL_STRONG`, défaut Opus)
+- Exécutée AVANT le plan pour chaque feature
+- Analyse produit sous 6 angles : complétude, edge cases, UX, cohérence, sécurité, performance
+- Contexte : tout pré-injecté (INDEX.md, auto-map.md, BRIEF, ROADMAP, research) — zéro lecture fichier
+- Lookahead parallèle : challenger de feature N+1 en arrière-plan (subshell isolée) pendant lint/critic/test/reflect de N
+- Config : `ENABLE_CHALLENGER=true` (on/off), `MAX_TURNS_CHALLENGER=3`
+- Guard : skip si challenger-N.md existe (crash recovery)
+
 ## Phase 03a — Plan (phases/03a-plan.md)
 - Placeholders : {{FEATURE_NAME}}, {{N}}
 - Crée : .orc/logs/plan-N.md (fichiers à modifier, interfaces, tests, risques)
 - Max 5 turns, modèle léger
+- Si un challenger a été exécuté, ses enrichissements sont injectés dans le prompt du plan
 - Injecté dans le prompt d'implémentation
 
 ## Phase 03 — Implement (phases/03-implement.md)

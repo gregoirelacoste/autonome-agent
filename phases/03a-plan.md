@@ -28,6 +28,9 @@ Le contexte projet (INDEX.md + auto-map.md) est injecté ci-dessus.
 
 Étape 3 — Seulement si nécessaire après avoir écrit le plan : lis 1-2 fichiers existants pour affiner.
 
+Si des enrichissements du challenger sont injectés ci-dessous, intègre-les dans ton plan.
+Chaque enrichissement doit apparaître dans les fichiers à modifier ou les tests à écrire.
+
 RÈGLES :
 - Max 20 lignes de plan. Sois concis et actionnable.
 - Ne crée PAS de code. Uniquement le plan.

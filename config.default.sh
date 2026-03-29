@@ -83,6 +83,14 @@ CLAUDE_MODEL=""                          # Modèle principal (implement, fix). E
                                          # Vide = modèle par défaut de la CLI.
 CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger pour phases simples (plan, critic, reflect, research, etc.)
                                          # Économise ~35-45% du budget total. Vide = utilise CLAUDE_MODEL.
+CLAUDE_MODEL_STRONG="claude-opus-4-6-20250514"  # Modèle fort pour phases de réflexion profonde (challenger)
+                                         # Vide = utilise CLAUDE_MODEL. Hiérarchie : STRONG > CLAUDE_MODEL > LIGHT.
+
+# === CHALLENGER (enrichissement feature pré-implémentation) ===
+ENABLE_CHALLENGER=true                   # Challenger chaque feature avant plan (modèle fort)
+                                         # Analyse produit : complétude, edge cases, UX, sécurité, cohérence
+                                         # false = skip directement au plan
+MAX_TURNS_CHALLENGER=3                   # Turns pour le challenger (contexte pré-injecté → 1-2 suffisent)
 
 # === BUDGET ===
 MAX_BUDGET_USD="200.00"                  # Budget max en USD. Garde-fou par défaut. Ajuster selon le projet.
@@ -96,6 +104,7 @@ STALL_KILL_THRESHOLD=60                  # Nombre de checks sans données avant 
 # Timeouts par phase (secondes). Les phases non listées utilisent CLAUDE_TIMEOUT.
 # Ajuster selon vos besoins. Commenter pour tout ramener à CLAUDE_TIMEOUT.
 declare -A PHASE_TIMEOUTS=(
+  ["challenger"]=120        # 2min  — challenge feature (analyse produit, pas code)
   ["plan"]=120              # 2min  — planification rapide
   ["critic"]=600            # 10min — review adversariale (modèle principal, 10 turns)
   ["reflect"]=180           # 3min  — rétrospective feature

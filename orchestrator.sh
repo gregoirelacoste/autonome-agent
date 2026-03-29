@@ -141,12 +141,22 @@ get_model_pricing() {
 # Phases légères (modèle léger). Critic + tech-debt utilisent le modèle PRINCIPAL
 LIGHT_PHASES="plan acceptance reflection reflect self-improve meta-retro quality strategy research-initial research-epic evolve alignment user-docs"
 
+# Phases fortes qui utilisent CLAUDE_MODEL_STRONG si disponible
+# Réflexion profonde : challenger (enrichissement produit pré-implémentation)
+STRONG_PHASES="challenger"
+
 # Résoudre le modèle effectif pour une phase donnée
-# Usage: resolve_model "reflection" → affiche le modèle à utiliser
+# Hiérarchie : STRONG (challenger) > CLAUDE_MODEL (implement, fix) > LIGHT (plan, reflect)
+# Usage: resolve_model "challenger" → affiche le modèle à utiliser
 resolve_model() {
   local phase="$1"
-  if [ -n "${CLAUDE_MODEL_LIGHT:-}" ] && [[ " $LIGHT_PHASES " == *" $phase "* ]]; then
+  # Tier 1 : modèle fort (challenger, réflexion profonde)
+  if [ -n "${CLAUDE_MODEL_STRONG:-}" ] && [[ " $STRONG_PHASES " == *" $phase "* ]]; then
+    echo "$CLAUDE_MODEL_STRONG"
+  # Tier 2 : modèle léger (plan, reflect, etc.)
+  elif [ -n "${CLAUDE_MODEL_LIGHT:-}" ] && [[ " $LIGHT_PHASES " == *" $phase "* ]]; then
     echo "$CLAUDE_MODEL_LIGHT"
+  # Tier 3 : modèle principal (implement, fix, critic)
   else
     echo "${CLAUDE_MODEL:-}"
   fi
@@ -165,6 +175,12 @@ cleanup() {
     log WARN "Arrêt en cours — kill Claude (PID $CLAUDE_PID)..."
     kill "$CLAUDE_PID" 2>/dev/null || true
     wait "$CLAUDE_PID" 2>/dev/null || true
+  fi
+  # Tuer le challenger async (lookahead) si en cours
+  if [ -n "${CHALLENGER_ASYNC_PID:-}" ] && kill -0 "$CHALLENGER_ASYNC_PID" 2>/dev/null; then
+    log WARN "Arrêt en cours — kill challenger async (PID $CHALLENGER_ASYNC_PID)..."
+    kill "$CHALLENGER_ASYNC_PID" 2>/dev/null || true
+    wait "$CHALLENGER_ASYNC_PID" 2>/dev/null || true
   fi
   # Nettoyer le fichier temporaire
   [ -n "$TMP_JSON" ] && rm -f "$TMP_JSON"
@@ -798,6 +814,33 @@ run_claude() {
 
   local context_hint=""
   case "$phase_name" in
+    challenger)
+      # Pré-injecter tout le contexte produit pour éviter les tool calls (zéro lecture)
+      local brief_content="" roadmap_done="" roadmap_todo="" research_content=""
+      brief_content=$(head -100 "$PROJECT_DIR/.orc/BRIEF.md" 2>/dev/null || true)
+      roadmap_done=$(grep '^\- \[x\]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null | head -20 || true)
+      roadmap_todo=$(grep '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null | head -20 || true)
+      research_content=$(head -60 "$PROJECT_DIR/.orc/research/INDEX.md" 2>/dev/null || true)
+
+      context_hint="
+CARTE SÉMANTIQUE (INDEX.md) :
+${index_content:-[pas encore généré]}
+
+EXPORTS ET CLASSES (auto-map.md) :
+${automap_content:-[pas encore généré]}
+
+BRIEF PRODUIT :
+${brief_content:-[brief non disponible]}
+
+FEATURES TERMINÉES :
+${roadmap_done:-[aucune encore]}
+
+FEATURES À VENIR :
+${roadmap_todo:-[aucune]}
+
+INSIGHTS MARCHÉ :
+${research_content:-[pas de recherche]}"
+      ;;
     plan)
       context_hint="
 CARTE SÉMANTIQUE DU PROJET (INDEX.md) :
@@ -1160,6 +1203,60 @@ FIXEOF
 # Lit la prochaine feature non cochée de la ROADMAP
 next_feature() {
   grep -m1 '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null | sed 's/^- \[ \] //' || true
+}
+
+# Peek la Nième feature non-cochée (sans consommer)
+# Usage: peek_feature 2 → retourne la 2ème feature non-cochée (= celle d'après)
+peek_feature() {
+  local n="${1:-1}"
+  grep '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null | sed -n "${n}p" | sed 's/^- \[ \] //' || true
+}
+
+# Challenger async PID (global, pour cleanup et wait)
+CHALLENGER_ASYNC_PID=""
+
+# Lancer le challenger en subshell async (isole les globales run_claude)
+# Usage: run_challenger_async "feature_name" 3 &; CHALLENGER_ASYNC_PID=$!
+run_challenger_async() {
+  local feat_name="$1" feat_count="$2"
+  local cost_file="$PROJECT_DIR/.orc/logs/.challenger-cost-$feat_count"
+  local challenger_out="$PROJECT_DIR/.orc/logs/challenger-$feat_count.md"
+
+  # Guard : ne pas relancer si déjà produit (crash recovery)
+  if [ -f "$challenger_out" ]; then
+    return 0
+  fi
+
+  (
+    # Subshell : CLAUDE_PID, TMP_JSON etc. sont isolés du parent
+    local cost_before="$TOTAL_COST_USD"
+    local challenger_prompt
+    challenger_prompt=$(render_phase "03c-challenger.md" \
+      "FEATURE_NAME=$feat_name" \
+      "N=$feat_count")
+    run_claude "$challenger_prompt" "${MAX_TURNS_CHALLENGER:-3}" \
+      "$LOG_DIR/feature-$feat_count-challenger.log" "challenger" "$feat_name" || true
+
+    # Exporter le DELTA de coût (pas le total) pour le parent
+    local delta
+    delta=$(awk "BEGIN { printf \"%.6f\", $TOTAL_COST_USD - $cost_before }")
+    printf "%s" "$delta" > "$cost_file"
+  )
+}
+
+# Récupérer le coût du challenger async et l'intégrer au budget parent
+collect_challenger_cost() {
+  local feat_count="$1"
+  local cost_file="$PROJECT_DIR/.orc/logs/.challenger-cost-$feat_count"
+  if [ -f "$cost_file" ]; then
+    local delta_cost
+    delta_cost=$(cat "$cost_file" 2>/dev/null || echo "0")
+    if [ -n "$delta_cost" ] && [ "$delta_cost" != "0" ]; then
+      TOTAL_COST_USD=$(awk "BEGIN { printf \"%.6f\", $TOTAL_COST_USD + $delta_cost }")
+      log INFO "Coût challenger async intégré : +\$$delta_cost (total: \$$TOTAL_COST_USD)"
+    fi
+    rm -f "$cost_file"
+  fi
 }
 
 # Nom court pour les branches git (avec fallback si vide)
@@ -2637,12 +2734,48 @@ EOF
   # --- Auto repo map (avant chaque feature) ---
   generate_repo_map "$PROJECT_DIR"
 
+  # --- Challenger (modèle fort, enrichissement produit avant plan) ---
+  challenger_file="$PROJECT_DIR/.orc/logs/challenger-$FEATURE_COUNT.md"
+  if [ "${ENABLE_CHALLENGER:-true}" = true ]; then
+    # Récupérer le challenger async lancé au cycle précédent (lookahead)
+    if [ -n "${CHALLENGER_ASYNC_PID:-}" ]; then
+      log INFO "Attente du challenger async (lookahead)..."
+      wait "$CHALLENGER_ASYNC_PID" 2>/dev/null || true
+      CHALLENGER_ASYNC_PID=""
+      collect_challenger_cost "$FEATURE_COUNT"
+    fi
+
+    # Challenger synchrone si pas de lookahead (feature 1 ou reprise après crash)
+    if [ ! -f "$challenger_file" ]; then
+      update_phase_tracking "challenger" "$feature_name"
+      log INFO "Challenge de la feature en cours..."
+      challenger_prompt=$(render_phase "03c-challenger.md" \
+        "FEATURE_NAME=$feature_name" \
+        "N=$FEATURE_COUNT")
+      run_claude "$challenger_prompt" "${MAX_TURNS_CHALLENGER:-3}" \
+        "$LOG_DIR/feature-$FEATURE_COUNT-challenger.log" "challenger" "$feature_name" || {
+        log WARN "Challenger échoué — on continue sans."
+      }
+    else
+      log INFO "Challenger déjà prêt (lookahead ou reprise) — skip."
+    fi
+  fi
+
   # --- Planification rapide (modèle léger, avant implement) ---
   update_phase_tracking "plan" "$feature_name"
   log INFO "Planification en cours..."
   plan_prompt=$(render_phase "03a-plan.md" \
     "FEATURE_NAME=$feature_name" \
     "N=$FEATURE_COUNT")
+  # Injecter le challenger dans le prompt de plan s'il existe
+  if [ -f "${challenger_file:-}" ]; then
+    plan_prompt="$plan_prompt
+
+ENRICHISSEMENTS DU CHALLENGER (intègre-les dans ton plan) :
+$(cat "$challenger_file")"
+    log INFO "Challenger injecté dans le prompt de planification."
+  fi
+
   run_claude "$plan_prompt" "${MAX_TURNS_PLAN:-8}" "$LOG_DIR/feature-$FEATURE_COUNT-plan.log" "plan" "$feature_name" || {
     log WARN "Planification échouée — on continue sans plan."
   }
@@ -2701,7 +2834,37 @@ $alignment_response"
     log INFO "Réponses d'alignement injectées dans le prompt."
   fi
 
+  # Injecter seulement les enrichissements immédiats du challenger (pas les idées futures)
+  if [ -f "${challenger_file:-}" ]; then
+    local challenger_enrichments=""
+    challenger_enrichments=$(sed -n '/### Enrichissements immédiats/,/^### [^E]/{ /^### [^E]/d; p; }' "$challenger_file" 2>/dev/null | head -15 || true)
+    if [ -n "$challenger_enrichments" ]; then
+      impl_prompt="$impl_prompt
+
+ENRICHISSEMENTS PRODUIT (challenger — à intégrer dans l'implémentation) :
+$challenger_enrichments"
+      log INFO "Enrichissements challenger injectés dans l'implémentation."
+    fi
+  fi
+
   run_claude "$impl_prompt" "$MAX_TURNS_PER_INVOCATION" "$LOG_DIR/feature-$FEATURE_COUNT-impl.log" "implement" "$feature_name"
+
+  # --- Lookahead : lancer le challenger de la feature SUIVANTE en arrière-plan ---
+  if [ "${ENABLE_CHALLENGER:-true}" = true ]; then
+    local next_raw=""
+    next_raw=$(peek_feature 2)  # 2ème non-cochée = la suivante (la 1ère est en cours)
+    if [ -n "$next_raw" ]; then
+      local next_name="" next_count=0
+      next_name=$(echo "$next_raw" | sed 's/ |.*//')
+      next_count=$((FEATURE_COUNT + 1))
+      local next_challenger="$PROJECT_DIR/.orc/logs/challenger-$next_count.md"
+      if [ ! -f "$next_challenger" ]; then
+        log INFO "Lookahead: lancement challenger pour '$next_name' en arrière-plan..."
+        run_challenger_async "$next_name" "$next_count" &
+        CHALLENGER_ASYNC_PID=$!
+      fi
+    fi
+  fi
 
   # --- Lint (rapide, avant les tests) ---
   if [ -n "${LINT_COMMAND:-}" ]; then
