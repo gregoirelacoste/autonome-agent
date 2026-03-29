@@ -82,6 +82,14 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 |---|---|---|
 | `CLAUDE_MODEL` | *(vide = défaut CLI)* | Modèle principal (implement, fix) |
 | `CLAUDE_MODEL_LIGHT` | `claude-haiku-4-5-20251001` | Modèle léger (plan, reflect, research, etc.) |
+| `CLAUDE_MODEL_STRONG` | `claude-opus-4-6-20250514` | Modèle fort (challenger). Vide = `CLAUDE_MODEL` |
+
+### Challenger (enrichissement pré-implémentation)
+
+| Paramètre | Défaut | Description |
+|---|---|---|
+| `ENABLE_CHALLENGER` | `true` | Activer le challenger avant chaque feature (modèle fort) |
+| `MAX_TURNS_CHALLENGER` | 3 | Turns pour le challenger (contexte pré-injecté, 1-2 suffisent) |
 
 ### Budget
 
@@ -101,6 +109,7 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 
 | Phase | Timeout | Description |
 |---|---|---|
+| `challenger` | 120s (2min) | Enrichissement produit pré-implémentation |
 | `plan` | 120s (2min) | Planification rapide |
 | `critic` | 600s (10min) | Review adversariale (modèle principal) |
 | `reflect` | 180s (3min) | Rétrospective feature |

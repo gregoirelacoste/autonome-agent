@@ -35,7 +35,7 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
             │   Veille ciblée (avant chaque epic)       │
             │       │                                   │
             │       ▼                                   │
-            │   Plan ──▶ Implement ──▶ Lint ──▶ Critic ──▶ Test ──▶ Fix (loop) ─┐ │
+            │   Challenger ──▶ Plan ──▶ Implement ──▶ Lint ──▶ Critic ──▶ Test ──▶ Fix (loop) ─┐ │
             │                                      │   │
             │       ┌──────────────────────────────┘   │
             │       ▼                                   │
@@ -185,14 +185,31 @@ Recherche focalisée sur le domaine de l'epic :
 
 Met à jour `research/` et ajuste les specs dans `ROADMAP.md`.
 
-### 3b. Micro-phase Plan
+### 3b. Challenger (enrichissement pré-implémentation)
+
+`phases/03c-challenger.md` — 3 turns max, modèle **fort** (`CLAUDE_MODEL_STRONG`, défaut Opus).
+
+Claude joue le rôle de **product thinker senior** pour enrichir la feature AVANT qu'elle soit planifiée. Analyse sous 6 angles : complétude, edge cases, UX, cohérence, sécurité, performance.
+
+**Contexte complet pré-injecté** (INDEX.md, auto-map.md, BRIEF, ROADMAP, research) → zéro lecture fichier, ~3100 tokens/feature.
+
+Output : `.orc/logs/challenger-N.md` avec :
+- **Enrichissements immédiats** (3-7 actions concrètes) → injectés dans plan + implement
+- **Idées futures** (0-3 ideas) → backlog pour plus tard
+
+**Lookahead parallèle** : le challenger de feature N+1 tourne en arrière-plan (subshell isolée) pendant les phases lint/critic/test/reflect de feature N. Quand on arrive à N+1, le challenger est déjà prêt → 0 temps d'attente ajouté.
+
+Config : `ENABLE_CHALLENGER=true`, `CLAUDE_MODEL_STRONG`, `MAX_TURNS_CHALLENGER=3`.
+
+### 3c. Micro-phase Plan
 
 5 turns max, modèle léger (`CLAUDE_MODEL_LIGHT`). Produit `.orc/logs/plan-N.md` :
 - Fichiers à modifier, interfaces, tests, risques
+- Si un challenger a été exécuté, ses enrichissements sont injectés dans le prompt du plan
 - Le plan est injecté dans le prompt d'implémentation
 - Détecte les erreurs de conception AVANT de coder, réduit les cycles de fix
 
-### 3c. Implémentation
+### 3d. Implémentation
 
 1. Crée une branche `feature/<nom>`
 2. Lit le plan + le code existant (via INDEX.md + auto-map.md injectés)
@@ -201,12 +218,12 @@ Met à jour `research/` et ajuste les specs dans `ROADMAP.md`.
 5. Build
 6. Commit atomique
 
-### 3d. Lint
+### 3e. Lint
 
 Si `LINT_COMMAND` est défini, exécuté entre implement et la review adversariale.
 En cas d'échec, correction automatique par Claude (10 turns max) avant de continuer.
 
-### 3e. Review adversariale (Critic) — Multi-agent
+### 3f. Review adversariale (Critic) — Multi-agent
 
 `phases/03b-critic.md` — 10 turns max, modèle **principal** (pas léger).
 Utilise `--append-system-prompt` avec un persona adversarial ("reviewer senior sceptique")
@@ -215,7 +232,7 @@ distinct du coder pour éliminer le biais de confirmation.
 - Corrige max 3 bugs AVANT le cycle de test coûteux
 - Persona séparé = multi-agent (le critic ne partage pas le contexte du coder)
 
-### 3f. Test & Fix Loop
+### 3g. Test & Fix Loop
 
 ```
 attempt = 0
@@ -234,7 +251,7 @@ Si attempt == MAX_FIX:
     Feature marquée en échec, on passe à la suite
 ```
 
-### 3g. Acceptance (fin d'epic)
+### 3h. Acceptance (fin d'epic)
 
 `phases/04b-acceptance.md` — exécutée après chaque epic (toutes les `EPIC_SIZE` features).
 Valide les user stories du BRIEF de bout en bout :
@@ -244,7 +261,7 @@ Valide les user stories du BRIEF de bout en bout :
 4. Corrige max 5 problèmes critiques directement (pas de nouvelles features)
 5. Les problèmes non critiques vont en backlog
 
-### 3h. Reflect & Evolve (auto-amélioration)
+### 3i. Reflect & Evolve (auto-amélioration)
 
 Après chaque feature, Claude enrichit sa connaissance du projet :
 
@@ -339,7 +356,8 @@ MAX_BUDGET_USD="200.00"         # Budget max en USD (prédictif + post-hoc)
 # === MODÈLES (adaptatifs) ===
 CLAUDE_MODEL=""                 # Modèle principal (implement, fix, critic). Vide = défaut CLI
 CLAUDE_MODEL_LIGHT="claude-haiku-4-5-20251001"  # Modèle léger (plan, reflect, research)
-                                # resolve_model() choisit automatiquement selon la phase
+CLAUDE_MODEL_STRONG="claude-opus-4-6-20250514"  # Modèle fort (challenger)
+                                # resolve_model() : STRONG > CLAUDE_MODEL > LIGHT
                                 # MODEL_PRICING[] contient les tarifs par préfixe de modèle
 
 # === RYTHME ===

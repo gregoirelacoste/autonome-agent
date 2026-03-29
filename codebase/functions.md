@@ -12,13 +12,24 @@ Substitue {{VAR}} dans les prompts. Attention : `${content//pattern/replacement}
 Construit le prompt de fix via fichier temporaire pour éviter les problèmes de caractères spéciaux.
 
 ### resolve_model(phase_name)
-Choisit le modèle selon la phase. Retourne CLAUDE_MODEL_LIGHT pour les phases non-code (plan, reflect, research, etc.), CLAUDE_MODEL pour les phases critiques (implement, fix, critic).
+Choisit le modèle selon la phase. Hiérarchie à 3 tiers : `CLAUDE_MODEL_STRONG` pour les phases fortes (challenger), `CLAUDE_MODEL_LIGHT` pour les phases non-code (plan, reflect, research, etc.), `CLAUDE_MODEL` pour les phases critiques (implement, fix, critic). Fallback sur le tier inférieur si vide.
 
 ### get_model_pricing(model_name)
 Résout le coût input/output par token selon le modèle. Table MODEL_PRICING avec préfixes triés par longueur décroissante. Fallback tarif Sonnet + warning si modèle inconnu.
 
 ### adaptive_max_turns(phase_name, default_max)
 Calcule le max_turns optimal basé sur l'historique réel (p75 + 30% marge). Requiert 5+ échantillons valides. Ne dépasse jamais le défaut. Exclut les turns tronqués par max_turns pour éviter le feedback loop.
+
+## Challenger (enrichissement pré-implémentation)
+
+### peek_feature(n)
+Retourne la Nième feature non-cochée de la ROADMAP sans la consommer. `peek_feature 2` retourne la feature suivante. Utilisé pour le lookahead du challenger.
+
+### run_challenger_async(feature_name, feature_count)
+Lance le challenger dans une subshell isolée (globales CLAUDE_PID, TMP_JSON indépendantes). Écrit le delta de coût dans `.orc/logs/.challenger-cost-N`. Guard fichier : skip si `challenger-N.md` existe déjà. Appelé avec `&` pour exécution en arrière-plan.
+
+### collect_challenger_cost(feature_count)
+Récupère le delta de coût du challenger async et l'intègre au `TOTAL_COST_USD` du parent. Nettoie le fichier temporaire.
 
 ## Connaissance projet
 
