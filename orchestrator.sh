@@ -2574,8 +2574,8 @@ fi
 # Reprise après crash en post-project : sauter directement à post-project
 # (évite de re-générer la stratégie quand le projet est terminé)
 SKIP_TO_POST_PROJECT=false
-if [ -f "$PROJECT_DIR/DONE.md" ] && [[ "$WORKFLOW_PHASE" =~ ^(crashed|stopped)$ ]]; then
-  log INFO "Reprise post-projet détectée (DONE.md existe, workflow=$WORKFLOW_PHASE) — saut direct."
+if [ -f "$PROJECT_DIR/DONE.md" ] || [[ "$WORKFLOW_PHASE" =~ ^(done|crashed|stopped)$ ]]; then
+  log INFO "Reprise post-projet détectée (DONE.md ou workflow=$WORKFLOW_PHASE) — saut direct."
   SKIP_TO_POST_PROJECT=true
   RUN_STATUS="running"
 fi
