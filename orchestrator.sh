@@ -1288,7 +1288,6 @@ $prompt"
     _tee_pid=$!
     claude "${claude_args[@]}" > "$_debug_fifo" 2>&1 &
     CLAUDE_PID=$!
-    rm -f "$_debug_fifo"  # supprime le nom, les FDs restent ouverts
   else
     claude "${claude_args[@]}" > "$TMP_JSON" 2>&1 &
     CLAUDE_PID=$!
@@ -1366,6 +1365,11 @@ $prompt"
   if [ -n "$_tee_pid" ]; then
     wait "$_tee_pid" 2>/dev/null || true
     _tee_pid=""
+  fi
+  # Nettoyage FIFO après que les deux processus ont terminé (évite la race condition rm -f prématuré)
+  if [ -n "${_debug_fifo:-}" ]; then
+    rm -f "$_debug_fifo" 2>/dev/null || true
+    _debug_fifo=""
   fi
 
   local duration=$(( $(date +%s) - start_time ))
@@ -3269,7 +3273,7 @@ $alignment_response"
 
   # Injecter seulement les enrichissements immédiats du challenger (pas les idées futures)
   if [ -f "${challenger_file:-}" ]; then
-    local challenger_enrichments=""
+    challenger_enrichments=""
     challenger_enrichments=$(sed -n '/### Enrichissements immédiats/,/^### [^E]/{ /^### [^E]/d; p; }' "$challenger_file" 2>/dev/null | head -15 || true)
     if [ -n "$challenger_enrichments" ]; then
       impl_prompt="$impl_prompt
@@ -3284,16 +3288,15 @@ $challenger_enrichments"
 
   # --- Lookahead : lancer le challenger de la feature SUIVANTE en arrière-plan ---
   if [ "${ENABLE_CHALLENGER:-true}" = true ]; then
-    local next_raw=""
+    next_raw=""
     # Kanban: peek le 1er ticket todo (le courant est déjà en in-progress)
     next_raw=$(peek_ticket 1)
     # Fallback legacy
     [ -z "$next_raw" ] && next_raw=$(peek_feature 2)
     if [ -n "$next_raw" ]; then
-      local next_name="" next_count=0
       next_name=$(echo "$next_raw" | sed 's/ |.*//')
       next_count=$((FEATURE_COUNT + 1))
-      local next_challenger="$PROJECT_DIR/.orc/logs/challenger-$next_count.md"
+      next_challenger="$PROJECT_DIR/.orc/logs/challenger-$next_count.md"
       if [ ! -f "$next_challenger" ]; then
         log INFO "Lookahead: lancement challenger pour '$next_name' en arrière-plan..."
         run_challenger_async "$next_name" "$next_count" &
@@ -3502,11 +3505,11 @@ Ton approche actuelle ne fonctionne pas. Tu DOIS :
 
   # --- Product Review (autocritique métier post-implémentation) ---
   if [ "${ENABLE_PRODUCT_REVIEW:-true}" = true ] && [ "$tests_passed" = true ]; then
-    local product_review_file="$PROJECT_DIR/.orc/logs/product-review-$FEATURE_COUNT.md"
+    product_review_file="$PROJECT_DIR/.orc/logs/product-review-$FEATURE_COUNT.md"
     if [ ! -f "$product_review_file" ]; then
       log PHASE "PRODUCT-REVIEW — $feature_name"
       update_phase_tracking "product-review" "$feature_name"
-      local pr_prompt
+      pr_prompt=""
       pr_prompt=$(render_phase "04d-product-review.md" \
         "FEATURE_NAME=$feature_name" \
         "N=$FEATURE_COUNT")
@@ -3696,7 +3699,7 @@ COMMANDE DEV SERVER : ${DEV_COMMAND:-npm run dev}"
 
     # Phase QA : test fonctionnel réel (curl + navigateur)
     if [ -n "${DEV_COMMAND:-}" ]; then
-      local qa_port="${DEV_PORT:-3000}"
+      qa_port="${DEV_PORT:-3000}"
       log PHASE "QA — Epic $epic_number"
       update_phase_tracking "qa" "epic-$epic_number"
 
