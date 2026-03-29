@@ -80,6 +80,18 @@
 - Max 5 fixes, max 5 scénarios navigateur, max 5 screenshots
 - Timeout : 10min. Modèle : principal (corrige du code)
 
+## Phase 04d — Product Review (phases/04d-product-review.md)
+- Placeholders : {{FEATURE_NAME}}, {{N}}
+- Crée : .orc/logs/product-review-N.md (évaluation produit + quick wins)
+- Max 5 turns, modèle fort (`CLAUDE_MODEL_STRONG`, défaut Opus)
+- Exécutée APRÈS les tests, AVANT reflect (si tests passés)
+- Miroir du challenger : vérifie que l'implémentation livre de la valeur à l'utilisateur
+- Évalue : adéquation brief, complétude utilisateur, UX ressentie, valeur livrée, quick wins, cohérence
+- Contexte pré-injecté : BRIEF, diff, features livrées, challenger output (attendu vs réalisé)
+- Peut appliquer max 3 quick wins cosmétiques (libellés, messages, états vides)
+- Config : `ENABLE_PRODUCT_REVIEW=true` (on/off), `MAX_TURNS_PRODUCT_REVIEW=5`
+- Guard : skip si product-review-N.md existe (crash recovery)
+
 ## Phase 05 — Reflect (phases/05-reflect.md)
 - Placeholders : {{FEATURE_NAME}}, {{TESTS_PASSED}}, {{FIX_ATTEMPTS}}, {{N}}
 - Met à jour : codebase/*.md, INDEX.md, stack-conventions.md, CLAUDE.md, skills, ROADMAP.md

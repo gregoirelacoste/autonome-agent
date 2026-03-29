@@ -39,6 +39,9 @@ BOOTSTRAP ──▶ RECHERCHE INITIALE ──▶ STRATÉGIE & ROADMAP
             │                                      │   │
             │       ┌──────────────────────────────┘   │
             │       ▼                                   │
+            │   Product Review (autocritique métier)    │
+            │       │                                   │
+            │       ▼                                   │
             │   Reflect                                 │
             │       │                                   │
             │       ├── (fin d'epic) → Acceptance       │
@@ -232,7 +235,25 @@ distinct du coder pour éliminer le biais de confirmation.
 - Corrige max 3 bugs AVANT le cycle de test coûteux
 - Persona séparé = multi-agent (le critic ne partage pas le contexte du coder)
 
-### 3g. Test & Fix Loop
+### 3g. Product Review (autocritique métier)
+
+`phases/04d-product-review.md` — 5 turns max, modèle **fort** (`CLAUDE_MODEL_STRONG`, défaut Opus).
+
+Exécutée APRÈS les tests, AVANT reflect. Miroir du challenger : vérifie que l'implémentation **livre réellement de la valeur à l'utilisateur**.
+
+Évalue sous 6 angles :
+- **Adéquation** au brief — décalage entre spec et exécution ?
+- **Complétude** utilisateur — parcours de bout en bout ?
+- **Expérience** ressentie — l'utilisateur serait-il satisfait ?
+- **Valeur** livrée — "techniquement correct" vs "vraiment utile" ?
+- **Quick wins** — polish cosmétique à faible effort (max 3)
+- **Cohérence** produit — intégration avec les features précédentes
+
+Le challenger output est injecté pour comparer ce qui était **attendu** vs ce qui a été **réalisé**.
+
+Output : `.orc/logs/product-review-N.md`. Config : `ENABLE_PRODUCT_REVIEW=true`, `MAX_TURNS_PRODUCT_REVIEW=5`.
+
+### 3h. Test & Fix Loop
 
 ```
 attempt = 0
@@ -251,7 +272,7 @@ Si attempt == MAX_FIX:
     Feature marquée en échec, on passe à la suite
 ```
 
-### 3h. Acceptance (fin d'epic)
+### 3i. Acceptance (fin d'epic)
 
 `phases/04b-acceptance.md` — exécutée après chaque epic (toutes les `EPIC_SIZE` features).
 Valide les user stories du BRIEF de bout en bout :
@@ -261,7 +282,7 @@ Valide les user stories du BRIEF de bout en bout :
 4. Corrige max 5 problèmes critiques directement (pas de nouvelles features)
 5. Les problèmes non critiques vont en backlog
 
-### 3i. Reflect & Evolve (auto-amélioration)
+### 3j. Reflect & Evolve (auto-amélioration)
 
 Après chaque feature, Claude enrichit sa connaissance du projet :
 

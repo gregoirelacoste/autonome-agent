@@ -50,6 +50,10 @@ Migration auto : migrate_config() ajoute les paramètres manquants au démarrage
 - `ENABLE_CHALLENGER=true` — activer la phase challenger (enrichissement produit pré-implémentation)
 - `MAX_TURNS_CHALLENGER=3` — budget turns du challenger (contexte pré-injecté → 1-2 suffisent)
 
+## Product Review
+- `ENABLE_PRODUCT_REVIEW=true` — activer la review produit post-feature (autocritique métier)
+- `MAX_TURNS_PRODUCT_REVIEW=5` — budget turns (analyse + quick wins éventuels)
+
 ## Budget
 - `MAX_BUDGET_USD="200.00"` — budget max en USD (garde-fou prédictif + post-hoc)
 

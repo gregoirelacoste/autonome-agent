@@ -91,6 +91,13 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 | `ENABLE_CHALLENGER` | `true` | Activer le challenger avant chaque feature (modèle fort) |
 | `MAX_TURNS_CHALLENGER` | 3 | Turns pour le challenger (contexte pré-injecté, 1-2 suffisent) |
 
+### Product Review (autocritique métier post-implémentation)
+
+| Paramètre | Défaut | Description |
+|---|---|---|
+| `ENABLE_PRODUCT_REVIEW` | `true` | Activer la review produit après chaque feature (modèle fort) |
+| `MAX_TURNS_PRODUCT_REVIEW` | 5 | Turns pour la review (analyse + quick wins éventuels) |
+
 ### Budget
 
 | Paramètre | Défaut | Description |
@@ -110,6 +117,7 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 | Phase | Timeout | Description |
 |---|---|---|
 | `challenger` | 120s (2min) | Enrichissement produit pré-implémentation |
+| `product-review` | 180s (3min) | Autocritique métier post-feature |
 | `plan` | 120s (2min) | Planification rapide |
 | `critic` | 600s (10min) | Review adversariale (modèle principal) |
 | `reflect` | 180s (3min) | Rétrospective feature |

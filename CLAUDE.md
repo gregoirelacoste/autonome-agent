@@ -223,6 +223,9 @@ Le workspace est un repo git unique. `orchestrator.sh` et `phases/` sont des sym
 
 **Lookahead parallèle** : le challenger de feature N+1 tourne en arrière-plan (subshell isolée) pendant les phases lint/critic/test/reflect de feature N. Quand on arrive à N+1, le challenger est déjà prêt → 0 temps d'attente ajouté. `run_challenger_async()` lance la subshell, `CHALLENGER_ASYNC_PID` stocke le PID, `collect_challenger_cost()` récupère le coût. `peek_feature(2)` lit la feature suivante sans consommer.
 
+### Product review (autocritique métier post-implémentation)
+`phases/04d-product-review.md` — 5 turns max, modèle **fort** (`CLAUDE_MODEL_STRONG`, défaut Opus). Exécutée APRÈS les tests, AVANT reflect. Miroir du challenger : vérifie que ce qui a été codé **livre réellement de la valeur**. Évalue sous 6 angles : adéquation brief, complétude utilisateur, expérience ressentie, valeur livrée, quick wins, cohérence produit. Le challenger output est injecté pour comparer attendu vs réalisé. Peut appliquer max 3 quick wins cosmétiques (libellés, messages, états vides). Output : `product-review-N.md`. Config : `ENABLE_PRODUCT_REVIEW` (on/off), `MAX_TURNS_PRODUCT_REVIEW=5`. Guard fichier pour crash recovery.
+
 ### Micro-phase plan (avant implement)
 `phases/03a-plan.md` — 5 turns max, modèle léger. Produit `.orc/logs/plan-N.md` (fichiers à modifier, interfaces, tests, risques). Le plan est injecté dans le prompt d'implémentation. Si un challenger a été exécuté, ses enrichissements sont injectés dans le prompt du plan. Détecte les erreurs de conception AVANT de coder → réduit les cycles de fix.
 
