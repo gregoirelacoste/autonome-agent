@@ -23,6 +23,8 @@ Migration auto : migrate_config() ajoute les paramètres manquants au démarrage
 - `MAX_EVOLVE_CYCLES=2` — cycles evolve max (0 = illimité)
 - `MAX_AI_ROADMAP_ADDS=5` — tickets ajoutés par l'IA au kanban avant pause
 - `ALIGNMENT_CHECK=true` — checkpoint d'alignement entre cycles evolve
+- `ENABLE_AUTO_BRAINSTORM=true` — brainstorm auto en fin de cycle (recherche + 10 tickets)
+- `MAX_AUTO_BRAINSTORM_TICKETS=10` — max tickets par auto-brainstorm
 
 ## Notifications
 - `NOTIFY_COMMAND=""` — commande de notification (ex: notify-send, slack webhook)

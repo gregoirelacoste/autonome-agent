@@ -87,6 +87,7 @@ orc_help() {
   printf "    ${CYAN}orc roadmap <projet>${NC}              Roadmap d'un projet (kanban)\n"
   printf "    ${CYAN}orc roadmap ticket <projet>${NC}       Ajouter un ticket (dialogue + challenge IA)\n"
   printf "    ${CYAN}orc roadmap brainstorm <projet>${NC}   Brainstorm V2 (IA + recherche web + 10-15 tickets)\n"
+  printf "    ${CYAN}orc roadmap review <projet>${NC}      Reviewer les tickets ajoutés par l'IA\n"
   printf "    ${CYAN}orc roadmap --detail${NC}              + contexte, dépendances\n"
   printf "    ${CYAN}orc roadmap --full${NC}                + specs, critères\n"
   printf "    ${CYAN}orc roadmap --priority P1${NC}         Filtrer par priorité\n"
@@ -183,6 +184,7 @@ case "$COMMAND" in
     case "${1:-}" in
       ticket|t)  shift; cmd_roadmap_ticket "$@" ;;
       brainstorm|brain|b) shift; cmd_roadmap_brainstorm "$@" ;;
+      review|rev) shift; cmd_roadmap_review "$@" ;;
       *)         cmd_roadmap "$@" ;;
     esac
     ;;

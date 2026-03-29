@@ -974,3 +974,173 @@ _kanban_display_ticket() {
     done <<< "$criteria"
   fi
 }
+
+# ============================================================
+# COMMANDE : orc roadmap review <projet>
+# ============================================================
+
+cmd_roadmap_review() {
+  local name=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help)
+        echo ""
+        printf "${BOLD}orc roadmap review${NC} — Reviewer les tickets ajoutés par l'IA\n\n"
+        printf "  ${CYAN}orc roadmap review <projet>${NC}   Affiche les tickets récents (auto-brainstorm, evolve)\n"
+        printf "                                 Permet de valider, éditer, supprimer, rejeter\n"
+        echo ""
+        return 0
+        ;;
+      *)
+        if [ -z "$name" ]; then
+          name="$1"; shift
+        else
+          die "Argument inattendu : $1"
+        fi
+        ;;
+    esac
+  done
+
+  if [ -z "$name" ]; then
+    name=$(infer_project_from_cwd 2>/dev/null) || die "Usage : orc roadmap review <projet>"
+  fi
+  require_project "$name"
+
+  local dir
+  dir=$(project_dir "$name")
+
+  local todo_dir="$dir/.orc/roadmap/todo"
+  if [ ! -d "$todo_dir" ]; then
+    printf "${DIM}Aucun ticket dans le kanban.${NC}\n"
+    return 0
+  fi
+
+  # Collecter les tickets ajoutés par l'IA (source: auto-brainstorm, evolve, brainstorm)
+  local ai_tickets=()
+  local human_tickets=()
+  for f in "$todo_dir"/*.md; do
+    [ -f "$f" ] || continue
+    local src
+    src=$(kanban_field "$f" "source")
+    case "$src" in
+      auto-brainstorm|evolve|brainstorm|strategy)
+        ai_tickets+=("$f")
+        ;;
+      *)
+        human_tickets+=("$f")
+        ;;
+    esac
+  done
+
+  echo ""
+  printf "${BOLD}REVIEW ROADMAP — %s${NC}\n" "$name"
+  printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+
+  if [ ${#ai_tickets[@]} -eq 0 ]; then
+    printf "\n${DIM}  Aucun ticket IA à reviewer dans todo/.${NC}\n\n"
+    return 0
+  fi
+
+  # Afficher les tickets IA
+  printf "\n ${CYAN}${BOLD}Tickets IA a reviewer${NC} ${DIM}(%s tickets)${NC}\n\n" "${#ai_tickets[@]}"
+
+  local idx=0
+  for f in "${ai_tickets[@]}"; do
+    idx=$((idx + 1))
+    local t_id t_title t_prio t_type t_effort t_src t_epic
+    t_id=$(basename "$f" | grep -o '^[0-9]*' || echo "?")
+    t_title=$(kanban_title "$f")
+    t_prio=$(kanban_priority "$f")
+    t_type=$(kanban_type "$f")
+    t_effort=$(kanban_effort "$f")
+    t_src=$(kanban_field "$f" "source")
+    t_epic=$(kanban_field "$f" "epic")
+
+    local prio_color="$NC"
+    case "$t_prio" in
+      P0) prio_color="$RED" ;; P1) prio_color="$YELLOW" ;; P2) prio_color="$CYAN" ;; P3) prio_color="$DIM" ;;
+    esac
+
+    printf "  ${BOLD}%2d${NC}) ${prio_color}%s${NC} %-38s ${prio_color}[%s]${NC} ${DIM}%s %s${NC} ${DIM}(%s)${NC}\n" \
+      "$idx" "$t_id" "$t_title" "$t_prio" "$t_type" "$t_effort" "$t_src"
+  done
+
+  # Stats
+  local epic_list=""
+  local type_counts=""
+  for f in "${ai_tickets[@]}"; do
+    epic_list="$epic_list$(kanban_field "$f" "epic")
+"
+    type_counts="$type_counts$(kanban_type "$f")
+"
+  done
+  local unique_epics
+  unique_epics=$(echo "$epic_list" | sort -u | grep -c '.' || echo 0)
+  printf "\n  ${DIM}%s epics, %s tickets${NC}\n" "$unique_epics" "${#ai_tickets[@]}"
+
+  if [ ${#human_tickets[@]} -gt 0 ]; then
+    printf "\n ${GREEN}${BOLD}Tickets humains${NC} ${DIM}(%s — non concernés par la review)${NC}\n" "${#human_tickets[@]}"
+  fi
+
+  # Actions
+  echo ""
+  printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+  printf "  ${CYAN}v${NC})alider tout   ${CYAN}e${NC})diter N   ${CYAN}d${NC})upprimer N   ${RED}r${NC})ejeter tout   ${DIM}q${NC})uitter\n"
+  echo ""
+
+  while true; do
+    read -rp "  Action : " action
+
+    case "$action" in
+      v|V|"")
+        printf "\n${GREEN}Tous les tickets validés — ils seront implémentés au prochain run.${NC}\n\n"
+        return 0
+        ;;
+      e|E|e\ *|E\ *)
+        local edit_num
+        edit_num=$(echo "$action" | grep -o '[0-9]*')
+        if [ -n "$edit_num" ] && [ "$edit_num" -ge 1 ] && [ "$edit_num" -le "${#ai_tickets[@]}" ]; then
+          local edit_file="${ai_tickets[$((edit_num - 1))]}"
+          local editor="${EDITOR:-vi}"
+          "$editor" "$edit_file"
+          printf "${GREEN}Ticket mis à jour.${NC}\n"
+        else
+          printf "${RED}Numéro invalide (1-%s)${NC}\n" "${#ai_tickets[@]}"
+        fi
+        ;;
+      d|D|d\ *|D\ *)
+        local del_num
+        del_num=$(echo "$action" | grep -o '[0-9]*')
+        if [ -n "$del_num" ] && [ "$del_num" -ge 1 ] && [ "$del_num" -le "${#ai_tickets[@]}" ]; then
+          local del_file="${ai_tickets[$((del_num - 1))]}"
+          local del_title
+          del_title=$(kanban_title "$del_file")
+          rm -f "$del_file"
+          printf "${RED}Supprimé : %s${NC}\n" "$del_title"
+          # Recalculer
+          unset 'ai_tickets[$((del_num - 1))]'
+          ai_tickets=("${ai_tickets[@]}")
+        else
+          printf "${RED}Numéro invalide (1-%s)${NC}\n" "${#ai_tickets[@]}"
+        fi
+        ;;
+      r|R)
+        printf "\n${RED}Suppression de tous les tickets IA...${NC}\n"
+        for f in "${ai_tickets[@]}"; do
+          [ -f "$f" ] && rm -f "$f"
+        done
+        kanban_regenerate_view "$dir"
+        printf "${RED}%s tickets supprimés.${NC}\n\n" "${#ai_tickets[@]}"
+        return 0
+        ;;
+      q|Q)
+        printf "\n${DIM}Tickets inchangés.${NC}\n\n"
+        return 0
+        ;;
+      *)
+        printf "${DIM}Commandes : v(alider) e(diter) N d(upprimer) N r(ejeter) q(uitter)${NC}\n"
+        ;;
+    esac
+  done
+}

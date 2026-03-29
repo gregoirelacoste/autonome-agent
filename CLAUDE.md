@@ -83,7 +83,7 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 - `orc docs [sujet]` — documentation utilisateur
 - `orc watch <nom> [--interval 3m] [--interactive]` — opérateur autonome : surveille, corrige, relance. Arrêt : `orc watch stop <nom>` ou Ctrl+C (raccourci `orc w`)
 - `orc s` / `orc r` / `orc l <nom>` / `orc dash <nom>` / `orc w <nom>` — raccourcis (status, roadmap, logs, dashboard, watch)
-- `orc r t <projet>` / `orc r b <projet>` — raccourcis ticket / brainstorm
+- `orc r t <projet>` / `orc r b <projet>` / `orc r rev <projet>` — raccourcis ticket / brainstorm / review
 
 ### Développement
 - `bash -n orchestrator.sh` — vérifier la syntaxe sans exécuter
@@ -216,7 +216,10 @@ Pour diagnostiquer un run en cours sans relancer : lire `.orc/logs/orc-debug-liv
 `.orc/roadmap/{backlog,todo,in-progress,done}/` — chaque ticket est un fichier `NNN-slug.md` avec frontmatter YAML (id, title, priority, type, effort, tags, epic, source) + sections Contexte/Spécification/Critères/Notes. `next_ticket()` lit `todo/` trié par priorité P0→P3. `move_ticket()` déplace entre dossiers. `regenerate_roadmap_view()` génère `ROADMAP.md` comme vue compat dashboard/status. Migration auto des projets existants via `migrate_to_kanban()`. Le contenu riche du ticket est injecté dans les prompts de plan et d'implémentation.
 
 ### Ticket et brainstorm (orc-roadmap.sh)
-`orc roadmap ticket <projet>` — pipeline hybride : dialogue interactif (session Claude) → analyse + recherche web + rédaction (one-shot Claude avec prompt `ticket-challenge.md`) → review humain. `orc roadmap brainstorm <projet>` — 5 phases : vision (dialogue) → recherche + propositions (one-shot, `brainstorm-research.md`) → sélection (dialogue) → rédaction (one-shot, `brainstorm-write.md`) → validation. Les deux commandes gèrent le post-DONE (archive DONE.md, reset workflow) et le hot injection (P0 → human-notes.md).
+`orc roadmap ticket <projet>` — pipeline hybride : dialogue interactif (session Claude) → analyse + recherche web + rédaction (one-shot Claude avec prompt `ticket-challenge.md`) → review humain. `orc roadmap brainstorm <projet>` — 5 phases : vision (dialogue) → recherche + propositions (one-shot, `brainstorm-research.md`) → sélection (dialogue) → rédaction (one-shot, `brainstorm-write.md`) → validation. `orc roadmap review <projet>` — monitoring a posteriori des tickets IA (valider, éditer, supprimer, rejeter). Les commandes ticket/brainstorm gèrent le post-DONE (archive DONE.md, reset workflow) et le hot injection (P0 → human-notes.md).
+
+### Auto-brainstorm (fin de cycle, autonome)
+`run_auto_brainstorm()` dans orchestrator.sh — déclenché automatiquement en fin de cycle evolve quand score < 24/30 et `ENABLE_AUTO_BRAINSTORM=true` (défaut). L'IA fait le même pipeline que brainstorm mais en autonome : auto-vision des gaps → recherche web → propositions → auto-sélection (critères : impact maturité 40%, alignement brief 30%, diversité 15%, faisabilité 15%) → rédaction tickets. Prompt : `phases/auto-brainstorm.md`. Garde-fous : `check_direction_drift()` détecte la dérive thématique (>60% même epic → warning injecté), diversité obligatoire (3+ epics, max 40% par epic), `MAX_AUTO_BRAINSTORM_TICKETS=10`. Le checkpoint d'alignement (`ALIGNMENT_CHECK`) s'applique après l'auto-brainstorm → l'humain peut reviewer via `orc roadmap review`.
 
 ### Dashboard live
 `orc dashboard <projet>` (raccourci `orc dash`) affiche un dashboard live auto-refresh (5s) avec : barre de progression, feature en cours, coût, ETA, roadmap colorée, dernière activité. Basé sur la lecture de `state.json`, `tokens.json`, ROADMAP.md (vue auto-générée) et `orchestrator.log`.

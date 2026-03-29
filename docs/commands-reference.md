@@ -215,6 +215,17 @@ orc r b mon-app                      # Raccourci court
 Si le projet est terminé, le brainstorm archive DONE.md et propose de relancer.
 Utilise le modèle fort (`CLAUDE_MODEL_STRONG`) pour la phase recherche.
 
+### `orc roadmap review <projet>`
+
+Review les tickets ajoutés par l'IA (auto-brainstorm, evolve, brainstorm). Affiche les tickets avec leur source, permet de valider, éditer, supprimer ou rejeter en lot.
+
+```bash
+orc roadmap review mon-app       # Review interactive
+orc r rev mon-app                # Raccourci
+```
+
+Actions disponibles : `v`alider tout, `e`diter N, `d`upprimer N, `r`ejeter tout, `q`uitter.
+
 ## Administration (`orc admin`)
 
 ### `orc admin config [set KEY VAL]`
@@ -268,6 +279,7 @@ Met à jour le template orc.
 | `orc r` | `orc roadmap` |
 | `orc r t <nom>` | `orc roadmap ticket <nom>` |
 | `orc r b <nom>` | `orc roadmap brainstorm <nom>` |
+| `orc r rev <nom>` | `orc roadmap review <nom>` |
 | `orc w <nom>` | `orc watch <nom>` |
 | `orc c <nom>` | `orc chat <nom>` |
 

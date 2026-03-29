@@ -352,8 +352,13 @@ parcours utilisateur complet, CRUD fonctionnel, gestion d'erreurs, UX cohérente
 couverture de tests, documentation.
 
 1. **Score >= 24/30** → projet terminé → crée `DONE.md` → déploiement auto si `DEPLOY_COMMAND` configuré
-2. **Score >= 18/30** → crée 3 tickets ciblés dans `.orc/roadmap/todo/` → relance la boucle
-3. **Score < 18/30** → corrections prioritaires dans `.orc/roadmap/todo/`
+2. **Score < 24/30** → **auto-brainstorm** : l'IA lance un pipeline complet autonome
+   - Analyse des gaps (maturité, brief, parcours utilisateur)
+   - Recherche web (concurrence, tendances, bonnes pratiques)
+   - Propositions de 10 tickets avec diversité thématique (3+ epics)
+   - Auto-sélection par critères (impact 40%, brief 30%, diversité 15%, faisabilité 15%)
+   - Rédaction de tickets détaillés dans `.orc/roadmap/todo/`
+   - Détection de dérive directionnelle (>60% même epic → diversifier)
 
 Le cycle evolve utilise une boucle `while` interne (pas `exec "$0"`) pour
 relancer la boucle feature sans redémarrer le process. Le compteur `evolve_cycle`

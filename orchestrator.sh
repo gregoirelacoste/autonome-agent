@@ -588,6 +588,133 @@ regenerate_roadmap_view() {
   } > "$roadmap"
 }
 
+# Détecte la dérive directionnelle : si >60% des tickets récents sont dans le même epic
+# Retourne un warning textuel à injecter dans le prompt, ou rien si OK
+check_direction_drift() {
+  local epic_counts=""
+  local total=0
+  local max_count=0
+  local max_epic=""
+
+  # Compter les epics des tickets done + todo (les 20 derniers)
+  for dir in "$PROJECT_DIR/.orc/roadmap/done" "$PROJECT_DIR/.orc/roadmap/todo"; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.md; do
+      [ -f "$f" ] || continue
+      local epic
+      epic=$(_ticket_field "$f" "epic")
+      [ -z "$epic" ] && epic="sans-epic"
+      epic_counts="$epic_counts$epic
+"
+      total=$((total + 1))
+    done
+  done
+
+  [ "$total" -lt 5 ] && return 0  # Pas assez de données
+
+  # Trouver l'epic le plus fréquent
+  max_epic=$(echo "$epic_counts" | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
+  max_count=$(echo "$epic_counts" | grep -c "^${max_epic}$" 2>/dev/null || echo 0)
+
+  local ratio=$((max_count * 100 / total))
+  if [ "$ratio" -ge 60 ]; then
+    log WARN "Derive thematique detectee : $ratio% des tickets dans l'epic '$max_epic'"
+    echo "
+ATTENTION — DERIVE THEMATIQUE DETECTEE :
+$ratio% des tickets recents ($max_count/$total) sont dans l'epic '$max_epic'.
+Tu DOIS diversifier les propositions. Explore d'autres domaines du produit.
+Assure-toi que les prochains tickets couvrent au moins 3 epics differents."
+  fi
+}
+
+# Lance le pipeline auto-brainstorm (recherche + propositions + rédaction)
+# Appelé par la phase evolve quand score < 24/30
+run_auto_brainstorm() {
+  local cycle="$1"
+  local max_tickets="${MAX_AUTO_BRAINSTORM_TICKETS:-10}"
+
+  log PHASE "AUTO-BRAINSTORM — Cycle $cycle (max $max_tickets tickets)"
+
+  # Collecter le contexte
+  local brief_content="" index_content="" maturity_content=""
+  local done_tickets="" todo_tickets="" backlog_tickets=""
+  local research_content="" alignment_content="" drift_warning=""
+
+  [ -f "$PROJECT_DIR/.orc/BRIEF.md" ] && brief_content=$(head -100 "$PROJECT_DIR/.orc/BRIEF.md")
+  [ -f "$PROJECT_DIR/.orc/codebase/INDEX.md" ] && index_content=$(cat "$PROJECT_DIR/.orc/codebase/INDEX.md")
+
+  # Dernier score de maturité
+  local latest_maturity
+  latest_maturity=$(ls -t "$PROJECT_DIR/.orc/logs"/maturity-score*.md 2>/dev/null | head -1)
+  [ -f "$latest_maturity" ] && maturity_content=$(cat "$latest_maturity")
+
+  # Tickets par statut
+  for f in "$PROJECT_DIR/.orc/roadmap/done"/*.md; do
+    [ -f "$f" ] || continue
+    done_tickets="$done_tickets  #$(basename "$f" | grep -o '^[0-9]*') $(ticket_title "$f")
+"
+  done
+  for f in "$PROJECT_DIR/.orc/roadmap/todo"/*.md; do
+    [ -f "$f" ] || continue
+    todo_tickets="$todo_tickets  #$(basename "$f" | grep -o '^[0-9]*') $(ticket_title "$f")
+"
+  done
+  for f in "$PROJECT_DIR/.orc/roadmap/backlog"/*.md; do
+    [ -f "$f" ] || continue
+    backlog_tickets="$backlog_tickets  #$(basename "$f" | grep -o '^[0-9]*') $(ticket_title "$f")
+"
+  done
+
+  # Recherche existante
+  [ -f "$PROJECT_DIR/.orc/research/INDEX.md" ] && research_content=$(head -60 "$PROJECT_DIR/.orc/research/INDEX.md")
+
+  # Dernières réponses d'alignement
+  local latest_alignment
+  latest_alignment=$(ls -t "$PROJECT_DIR/.orc/logs"/alignment-response-*.md 2>/dev/null | head -1)
+  [ -f "$latest_alignment" ] && alignment_content=$(cat "$latest_alignment")
+
+  # Détection de dérive
+  drift_warning=$(check_direction_drift)
+
+  # Construire le prompt
+  local orc_dir
+  orc_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
+  local prompt
+  prompt=$(cat "$orc_dir/phases/auto-brainstorm.md" 2>/dev/null || echo "")
+
+  if [ -z "$prompt" ]; then
+    log WARN "Prompt auto-brainstorm.md non trouvé — fallback evolve classique."
+    return 1
+  fi
+
+  # Substituer les placeholders
+  prompt="${prompt//\{\{CYCLE\}\}/$cycle}"
+  prompt="${prompt//\{\{PROJECT_NAME\}\}/${PROJECT_NAME:-$(basename "$PROJECT_DIR")}}"
+  prompt="${prompt//\{\{MAX_TICKETS\}\}/$max_tickets}"
+  prompt="${prompt//\{\{PROJECT_DIR\}\}/$PROJECT_DIR}"
+  prompt="${prompt//\{\{BRIEF\}\}/${brief_content:-[Brief non disponible]}}"
+  prompt="${prompt//\{\{INDEX\}\}/${index_content:-[Index non disponible]}}"
+  prompt="${prompt//\{\{MATURITY_SCORE\}\}/${maturity_content:-[Score non disponible]}}"
+  prompt="${prompt//\{\{DONE_TICKETS\}\}/${done_tickets:-[Aucun]}}"
+  prompt="${prompt//\{\{TODO_TICKETS\}\}/${todo_tickets:-[Aucun]}}"
+  prompt="${prompt//\{\{BACKLOG_TICKETS\}\}/${backlog_tickets:-[Aucun]}}"
+  prompt="${prompt//\{\{RESEARCH\}\}/${research_content:-[Pas de recherche]}}"
+  prompt="${prompt//\{\{ALIGNMENT_RESPONSE\}\}/${alignment_content:-[Aucune reponse d alignement]}}"
+  prompt="${prompt//\{\{DRIFT_WARNING\}\}/${drift_warning}}"
+
+  # Invocation unique : recherche + propositions + auto-sélection + rédaction
+  update_phase_tracking "auto-brainstorm" "cycle-$cycle"
+  run_claude "$prompt" 25 "$LOG_DIR/auto-brainstorm-$cycle.log" "auto-brainstorm" "cycle-$cycle" || {
+    log WARN "Auto-brainstorm échoué — fallback evolve classique."
+    return 1
+  }
+
+  # Régénérer la vue
+  regenerate_roadmap_view
+  log INFO "Auto-brainstorm terminé — tickets créés dans .orc/roadmap/todo/"
+  return 0
+}
+
 # Met à jour CHANGELOG.md du projet après chaque feature mergée
 update_changelog() {
   local feature_name="$1"
@@ -3641,15 +3768,30 @@ if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
     MAIN_LOOP_CONTINUE=false
   else
     log PHASE "PHASE FINALE — ÉVOLUTION (cycle $EVOLVE_CYCLES)"
+
+    # Phase 1 : Score de maturité (evolve classique — décide DONE ou continue)
     evolve_prompt=$(render_phase "07-evolve.md")
     run_claude "$evolve_prompt" 30 "$LOG_DIR/07-evolve.log" "evolve"
 
-    # Régénérer la vue ROADMAP.md après evolve (l'IA a pu créer des tickets)
-    regenerate_roadmap_view
+    # Phase 2 : Si pas DONE → auto-brainstorm (remplace les 3-5 features basiques d'evolve)
+    todo_before=0
+    if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
+      todo_before=$(count_todo_tickets)
+
+      if [ "${ENABLE_AUTO_BRAINSTORM:-true}" = true ]; then
+        run_auto_brainstorm "$EVOLVE_CYCLES" || {
+          log WARN "Auto-brainstorm echoue — aucun ticket cree. Relancer ou valider la roadmap manuellement."
+        }
+      fi
+
+      # Régénérer la vue ROADMAP.md
+      regenerate_roadmap_view
+    fi
 
     if [ ! -f "$PROJECT_DIR/DONE.md" ] && (has_todo_tickets || grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null); then
-      # Compter les features ajoutées par l'IA
-      new_features=$(count_todo_tickets)
+      # Compter les features ajoutées par l'IA (delta = après - avant)
+      new_features=$(( $(count_todo_tickets) - todo_before ))
+      [ "$new_features" -lt 0 ] && new_features=0
       AI_ROADMAP_ADDS=$((AI_ROADMAP_ADDS + new_features))
       log INFO "Nouvelles features ajoutées par l'IA : $new_features (total IA: $AI_ROADMAP_ADDS)"
 

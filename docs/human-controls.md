@@ -128,6 +128,17 @@ orc r brain mon-projet              # Raccourci
 
 L'IA dialogue avec l'humain sur sa vision, audite le MVP, recherche la concurrence, propose 15-20 tickets, puis l'humain sélectionne ceux à garder. Les tickets validés sont écrits dans le kanban.
 
+## Review des tickets IA (`orc roadmap review`)
+
+Après un auto-brainstorm ou un cycle evolve, l'humain peut reviewer les tickets ajoutés par l'IA :
+
+```bash
+orc roadmap review mon-projet    # Affiche les tickets IA, permet d'agir
+orc r rev mon-projet             # Raccourci
+```
+
+Actions : valider tout, éditer un ticket, supprimer un ticket, rejeter tout le lot. Utile après un checkpoint d'alignement pour ajuster la direction avant de relancer.
+
 ## Modes d'autonomie
 
 | Mode | Intervention | Config |

@@ -27,6 +27,10 @@ MAX_AI_ROADMAP_ADDS=5                    # Max features ajoutées par l'IA entre
 ALIGNMENT_CHECK=true                     # Checkpoint d'alignement brief/code/roadmap entre les cycles evolve
                                          # Génère un rapport, pose des questions ciblées à l'humain au prochain start.
                                          # false = enchaîne les cycles sans pause d'alignement.
+ENABLE_AUTO_BRAINSTORM=true              # Brainstorm auto en fin de cycle (recherche web + 10 tickets)
+                                         # L'IA s'interroge elle-même : analyse gaps, recherche concurrence,
+                                         # propose et rédige des tickets structurés. false = evolve classique (3-5 tickets).
+MAX_AUTO_BRAINSTORM_TICKETS=10           # Max tickets générés par auto-brainstorm
 
 # === GITHUB (optionnel — tout fonctionne sans) ===
 # Principe : local = source de vérité, GitHub = miroir de visibilité.

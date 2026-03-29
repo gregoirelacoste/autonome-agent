@@ -23,41 +23,13 @@ PHASE ÉVOLUTION — Toutes les features de la ROADMAP sont terminées.
 ### Étape 2 : Décision
 
 **Si score >= 24/30 (produit mature)** → Option B (DONE)
-**Si score >= 18/30 (fonctionnel mais améliorable)** → Option A avec max 3 features ciblées
-**Si score < 18/30 (lacunes critiques)** → Option A avec les corrections prioritaires
+**Si score < 24/30** → Option A (le pipeline auto-brainstorm se chargera de créer les tickets détaillés)
 
-### Option A : Améliorations ciblées
-Identifie les features qui augmenteraient le plus le score de maturité.
+### Option A : Continuer
 
-Crée des tickets dans `.orc/roadmap/todo/` (un fichier par feature). Pour chaque ticket :
+Note dans .orc/logs/maturity-score.md les 3 critères les plus faibles et les axes d'amélioration prioritaires. Le système lancera automatiquement un brainstorm complet (recherche web, propositions, rédaction de tickets) après cette phase.
 
-Format fichier : `NNN-slug.md` (NNN = prochain numéro séquentiel après les tickets existants)
-
-```yaml
----
-id: NNN
-title: "Titre concis"
-priority: P1
-type: feature|bugfix|evolution
-effort: S|M|L
-tags: []
-epic: evolve-cycle-N
-created: YYYY-MM-DD
-source: evolve
----
-
-## Contexte
-Quel critère de maturité cette feature améliore.
-Quelle section du brief elle sert.
-
-## Spécification
-Ce qui doit être implémenté.
-
-## Critères de validation
-- [ ] Critère testable
-```
-
-Limiter les ajouts à **5 tickets maximum** par cycle d'évolution.
+**Ne crée PAS de tickets toi-même** — c'est la phase auto-brainstorm qui s'en charge avec un pipeline plus complet (recherche concurrence, diversité thématique, tickets détaillés).
 
 ### Option B : Projet complet
 Crée DONE.md avec :
