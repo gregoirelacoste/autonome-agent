@@ -74,12 +74,38 @@ Tracking des tokens et coûts dans .orc/tokens.json. Modèle et turns trackés p
 Migration auto au démarrage. Compare .orc/config.sh avec config.default.sh, ajoute les paramètres manquants. Traitement spécial pour PHASE_TIMEOUTS (declare -A).
 
 ### mark_feature_done_bash(feature_name)
-Coche la feature dans ROADMAP.md via sed. Double sécurité avec le cochage par Claude en phase reflect.
+Legacy : coche la feature dans ROADMAP.md via sed. Fallback quand le kanban n'est pas utilisé.
+
+### migrate_to_kanban()
+Migration auto au démarrage. Convertit le ROADMAP.md plat (lignes `- [ ]`) en fichiers tickets dans `.orc/roadmap/{todo,done}/`. Archive l'ancien fichier en `.legacy`.
+
+## Kanban (système de tickets)
+
+### init_kanban()
+Crée la structure `.orc/roadmap/{backlog,todo,in-progress,done}/`.
+
+### next_ticket()
+Lit le prochain ticket dans `todo/`, trié par priorité P0→P3 puis par ID. Retourne le chemin du fichier.
+
+### peek_ticket(n)
+Retourne le titre du Nième ticket todo (pour le challenger lookahead).
+
+### move_ticket(file, status)
+Déplace un ticket entre statuts (ex: todo→in-progress, in-progress→done).
+
+### ticket_title(file) / ticket_context(file)
+Lit le titre (frontmatter) et le contenu markdown (après frontmatter) d'un ticket.
+
+### has_todo_tickets() / count_todo_tickets()
+Vérifie s'il reste des tickets à implémenter / compte les tickets todo.
+
+### regenerate_roadmap_view()
+Génère ROADMAP.md depuis le kanban (vue compat dashboard/status, format checkbox).
 
 ## Helpers
 
 ### next_feature()
-Lit la prochaine feature non cochée de ROADMAP.md.
+Legacy : lit la prochaine feature non cochée de ROADMAP.md. Fallback quand le kanban n'est pas utilisé.
 
 ### branch_name(feature_name)
 Sanitize le nom de feature pour créer un nom de branche git.

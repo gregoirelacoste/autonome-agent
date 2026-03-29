@@ -36,6 +36,11 @@ NC='\033[0m'
 
 die() { printf "${RED}Erreur : %s${NC}\n" "$1" >&2; exit 1; }
 
+# === CHARGEMENT DES MODULES ===
+source "$ORC_DIR/orc-agent.sh"
+source "$ORC_DIR/orc-admin.sh"
+source "$ORC_DIR/orc-roadmap.sh"
+
 # === MARKDOWN RENDERER ===
 render_markdown() {
   local file="$1"
@@ -79,7 +84,9 @@ orc_help() {
   echo ""
   printf "  ${BOLD}Roadmap :${NC}\n"
   printf "    ${CYAN}orc roadmap${NC}                       Roadmap orc (développement du template)\n"
-  printf "    ${CYAN}orc roadmap <projet>${NC}              Roadmap d'un projet\n"
+  printf "    ${CYAN}orc roadmap <projet>${NC}              Roadmap d'un projet (kanban)\n"
+  printf "    ${CYAN}orc roadmap ticket <projet>${NC}       Ajouter un ticket (dialogue + challenge IA)\n"
+  printf "    ${CYAN}orc roadmap brainstorm <projet>${NC}   Brainstorm V2 (IA + recherche web + 10-15 tickets)\n"
   printf "    ${CYAN}orc roadmap --detail${NC}              + contexte, dépendances\n"
   printf "    ${CYAN}orc roadmap --full${NC}                + specs, critères\n"
   printf "    ${CYAN}orc roadmap --priority P1${NC}         Filtrer par priorité\n"
@@ -93,13 +100,12 @@ orc_help() {
   printf "    ${CYAN}orc admin key${NC}                     Voir les clés API\n"
   printf "    ${CYAN}orc admin key set <key>${NC}           Configurer clé Anthropic\n"
   printf "    ${CYAN}orc admin version${NC}                 Version + vérifications\n"
-  printf "    ${CYAN}orc admin update${NC}                  Mettre à jour le template\n"
   echo ""
   printf "  ${BOLD}Documentation :${NC}\n"
   printf "    ${CYAN}orc docs${NC}                          Index de la documentation\n"
   printf "    ${CYAN}orc docs <sujet>${NC}                  Ouvrir une page (getting-started, commands, etc.)\n"
   echo ""
-  printf "  ${DIM}Raccourcis : 'orc s' = status, 'orc l <nom>' = logs, 'orc r' = roadmap, 'orc dash <nom>' = dashboard, 'orc w <nom>' = watch${NC}\n"
+  printf "  ${DIM}Raccourcis : 'orc s' = status, 'orc l <nom>' = logs, 'orc r' = roadmap, 'orc r t <p>' = ticket, 'orc r b <p>' = brainstorm, 'orc dash <nom>' = dashboard, 'orc w <nom>' = watch${NC}\n"
   echo ""
 }
 
@@ -170,46 +176,28 @@ shift || true
 
 case "$COMMAND" in
   agent|a)
-    source "$ORC_DIR/orc-agent.sh"
     agent_dispatch "$@"
     ;;
   roadmap|r)
-    source "$ORC_DIR/orc-agent.sh"
-    # Si le premier arg est un nom de projet existant, afficher sa roadmap
-    if [ -n "${1:-}" ] && [ -d "$(project_dir "$1")" ]; then
-      cmd_project_roadmap "$@"
-    else
-      cmd_roadmap "$@"
-    fi
+    # Sous-commandes roadmap enrichies
+    case "${1:-}" in
+      ticket|t)  shift; cmd_roadmap_ticket "$@" ;;
+      brainstorm|brain|b) shift; cmd_roadmap_brainstorm "$@" ;;
+      *)         cmd_roadmap "$@" ;;
+    esac
     ;;
   admin)
-    source "$ORC_DIR/orc-admin.sh"
     admin_dispatch "$@"
     ;;
   docs|d)
     cmd_docs "$@"
     ;;
   # Raccourcis directs pour les commandes les plus fréquentes
-  status|s)
-    source "$ORC_DIR/orc-agent.sh"
-    cmd_status "$@"
-    ;;
-  dashboard|dash|db)
-    source "$ORC_DIR/orc-agent.sh"
-    cmd_dashboard "$@"
-    ;;
-  logs|l)
-    source "$ORC_DIR/orc-agent.sh"
-    cmd_logs "$@"
-    ;;
-  chat|c)
-    source "$ORC_DIR/orc-agent.sh"
-    cmd_chat "$@"
-    ;;
-  watch|w)
-    source "$ORC_DIR/orc-agent.sh"
-    cmd_watch "$@"
-    ;;
+  status|s)    cmd_status "$@" ;;
+  dashboard|dash|db) cmd_dashboard "$@" ;;
+  logs|l)      cmd_logs "$@" ;;
+  chat|c)      cmd_chat "$@" ;;
+  watch|w)     cmd_watch "$@" ;;
   help|-h|--help)
     orc_help
     ;;
@@ -218,8 +206,7 @@ case "$COMMAND" in
     ;;
   *)
     # Tenter comme sous-commande agent par défaut
-    source "$ORC_DIR/orc-agent.sh"
-    agent_dispatch "$COMMAND" "$@" 2>/dev/null || {
+    agent_dispatch "$COMMAND" "$@" || {
       die "Commande inconnue : $COMMAND. Voir : orc help"
     }
     ;;

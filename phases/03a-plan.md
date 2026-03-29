@@ -4,7 +4,7 @@ Le contexte projet (INDEX.md + auto-map.md) est injecté ci-dessus.
 
 **PRIORITÉ ABSOLUE : écris d'abord le fichier plan, puis lis si tu as besoin de détails.**
 
-Étape 1 — Lis la spec de cette feature dans .orc/ROADMAP.md (1 lecture max).
+Étape 1 — Lis le ticket détaillé (injecté ci-dessus dans TICKET DETAILLE, ou dans .orc/ROADMAP.md en fallback).
 Étape 2 — Écris immédiatement le plan dans .orc/logs/plan-{{N}}.md avec ce format :
 
 ## Plan : {{FEATURE_NAME}}

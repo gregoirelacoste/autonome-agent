@@ -427,7 +427,7 @@ timeline_update_last() {
   fi
 }
 
-# Marque une feature comme cochée dans ROADMAP.md (fiable, sed-based)
+# Marque une feature comme cochée dans ROADMAP.md (fiable, sed-based) — LEGACY
 mark_feature_done_bash() {
   local feature_name="$1"
   local roadmap="$PROJECT_DIR/.orc/ROADMAP.md"
@@ -438,6 +438,154 @@ mark_feature_done_bash() {
   # Remplacer la première occurrence unchecked contenant ce nom
   sed -i "0,/^\- \[ \] ${escaped_name}/s/^\- \[ \] \(${escaped_name}\)/- [x] \1/" "$roadmap" 2>/dev/null || true
   log INFO "Roadmap cochée (bash) : $feature_name"
+}
+
+# ============================================================
+# KANBAN — Gestion des tickets projet
+# ============================================================
+
+# Initialise la structure kanban
+init_kanban() {
+  mkdir -p "$PROJECT_DIR/.orc/roadmap"/{backlog,todo,in-progress,done}
+}
+
+# Lit un champ du frontmatter YAML d'un ticket
+_ticket_field() {
+  local file="$1" field="$2"
+  sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null | grep "^${field}:" | head -1 | sed "s/^${field}: *//;s/^\"//;s/\"$//"
+}
+
+# Lit le titre d'un ticket
+ticket_title() {
+  _ticket_field "$1" "title"
+}
+
+# Lit le contenu markdown d'un ticket (après le frontmatter)
+ticket_context() {
+  awk 'BEGIN{c=0} /^---$/{c++; next} c>=2{print}' "$1" 2>/dev/null
+}
+
+# Retourne le prochain ticket à implémenter (chemin du fichier), trié par priorité P0→P3 puis ID
+next_ticket() {
+  local todo_dir="$PROJECT_DIR/.orc/roadmap/todo"
+  [ -d "$todo_dir" ] || return 0
+  for p in P0 P1 P2 P3; do
+    for f in "$todo_dir"/*.md; do
+      [ -f "$f" ] || continue
+      local prio
+      prio=$(_ticket_field "$f" "priority")
+      if [ "$prio" = "$p" ]; then
+        echo "$f"
+        return 0
+      fi
+    done
+  done
+}
+
+# Peek le Nième ticket todo (pour challenger lookahead)
+peek_ticket() {
+  local n="${1:-1}" count=0
+  local todo_dir="$PROJECT_DIR/.orc/roadmap/todo"
+  [ -d "$todo_dir" ] || return 0
+  for p in P0 P1 P2 P3; do
+    for f in "$todo_dir"/*.md; do
+      [ -f "$f" ] || continue
+      local prio
+      prio=$(_ticket_field "$f" "priority")
+      if [ "$prio" = "$p" ]; then
+        count=$((count + 1))
+        if [ "$count" -eq "$n" ]; then
+          ticket_title "$f"
+          return 0
+        fi
+      fi
+    done
+  done
+}
+
+# Déplace un ticket vers un statut
+move_ticket() {
+  local ticket_file="$1" target_status="$2"
+  local target_dir="$PROJECT_DIR/.orc/roadmap/$target_status"
+  mkdir -p "$target_dir"
+  mv "$ticket_file" "$target_dir/$(basename "$ticket_file")"
+}
+
+# Vérifie s'il reste des tickets todo
+has_todo_tickets() {
+  local todo_dir="$PROJECT_DIR/.orc/roadmap/todo"
+  [ -d "$todo_dir" ] || return 1
+  for f in "$todo_dir"/*.md; do
+    [ -f "$f" ] && return 0
+  done
+  return 1
+}
+
+# Compte les tickets todo
+count_todo_tickets() {
+  local count=0
+  local todo_dir="$PROJECT_DIR/.orc/roadmap/todo"
+  [ -d "$todo_dir" ] || { echo 0; return; }
+  for f in "$todo_dir"/*.md; do
+    [ -f "$f" ] && count=$((count + 1))
+  done
+  echo "$count"
+}
+
+# Prochain ID disponible
+next_ticket_id() {
+  local max=0
+  for f in "$PROJECT_DIR/.orc/roadmap"/*/*.md; do
+    [ -f "$f" ] || continue
+    local num
+    num=$(basename "$f" | grep -o '^[0-9]*' || echo 0)
+    [ "$num" -gt "$max" ] && max="$num"
+  done
+  echo $((max + 1))
+}
+
+# Génère un slug depuis un titre
+_ticket_slug() {
+  echo "$1" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]' | sed 's/^-*//;s/-*$//;s/--*/-/g' | head -c 40
+}
+
+# Régénère la vue ROADMAP.md (compat dashboard/status)
+regenerate_roadmap_view() {
+  local roadmap="$PROJECT_DIR/.orc/ROADMAP.md"
+  local project_name="${PROJECT_NAME:-$(basename "$PROJECT_DIR")}"
+
+  {
+    echo "# ROADMAP — $project_name"
+    echo ""
+
+    # In-progress
+    for f in "$PROJECT_DIR/.orc/roadmap/in-progress"/*.md; do
+      [ -f "$f" ] || continue
+      echo "- [ ] $(ticket_title "$f")"
+    done
+
+    # Todo (trié par priorité)
+    for p in P0 P1 P2 P3; do
+      for f in "$PROJECT_DIR/.orc/roadmap/todo"/*.md; do
+        [ -f "$f" ] || continue
+        local prio
+        prio=$(_ticket_field "$f" "priority")
+        [ "$prio" = "$p" ] && echo "- [ ] $(ticket_title "$f")"
+      done
+    done
+
+    # Backlog
+    for f in "$PROJECT_DIR/.orc/roadmap/backlog"/*.md; do
+      [ -f "$f" ] || continue
+      echo "- [ ] $(ticket_title "$f")"
+    done
+
+    # Done
+    for f in "$PROJECT_DIR/.orc/roadmap/done"/*.md; do
+      [ -f "$f" ] || continue
+      echo "- [x] $(ticket_title "$f")"
+    done
+  } > "$roadmap"
 }
 
 # Met à jour CHANGELOG.md du projet après chaque feature mergée
@@ -2541,6 +2689,78 @@ elif [ -f "$SCRIPT_DIR/config.sh" ]; then
   source "$SCRIPT_DIR/config.sh"
 fi
 
+# === MIGRATION KANBAN ===
+# Convertit le ROADMAP.md plat en structure kanban si pas encore fait
+migrate_to_kanban() {
+  local roadmap="$PROJECT_DIR/.orc/ROADMAP.md"
+  local kanban_dir="$PROJECT_DIR/.orc/roadmap"
+
+  # Déjà migré ? (un des sous-dossiers existe avec du contenu, ou le dossier todo existe)
+  if [ -d "$kanban_dir/todo" ] || [ -d "$kanban_dir/done" ]; then
+    return 0
+  fi
+
+  # Pas de ROADMAP.md ? Juste initialiser la structure vide
+  if [ ! -f "$roadmap" ]; then
+    init_kanban
+    return 0
+  fi
+
+  init_kanban
+  local id=1
+
+  # Parser chaque ligne de feature du ROADMAP.md
+  while IFS= read -r line; do
+    local title desc slug padded_id status_dir
+    title=$(echo "$line" | sed 's/^- \[.\] //' | sed 's/ |.*//')
+    desc=$(echo "$line" | grep -o '|.*' | sed 's/^| *//' || true)
+    slug=$(echo "$title" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]' | sed 's/^-*//;s/-*$//;s/--*/-/g' | head -c 30)
+    padded_id=$(printf "%03d" "$id")
+
+    if [[ "$line" =~ ^\-\ \[x\] ]]; then
+      status_dir="done"
+    else
+      status_dir="todo"
+    fi
+
+    cat > "$kanban_dir/$status_dir/$padded_id-$slug.md" <<TICKET
+---
+id: $id
+title: "$title"
+priority: P1
+type: feature
+effort: M
+tags: []
+epic: mvp
+created: $(date '+%Y-%m-%d')
+source: strategy
+---
+
+## Contexte
+Feature issue de la roadmap initiale.
+
+## Specification
+$title
+$([ -n "$desc" ] && echo "
+Criteres d'acceptance : $desc")
+
+## Criteres de validation
+$([ -n "$desc" ] && echo "- [ ] $desc" || echo "- [ ] Feature implementee et fonctionnelle")
+
+## Notes
+Migre depuis ROADMAP.md (format legacy).
+TICKET
+
+    id=$((id + 1))
+  done < <(grep '^\- \[' "$roadmap")
+
+  # Archiver l'ancien fichier et régénérer la vue
+  mv "$roadmap" "$roadmap.legacy"
+  regenerate_roadmap_view
+  log INFO "Migration kanban : $((id - 1)) tickets migres depuis ROADMAP.md"
+}
+migrate_to_kanban
+
 clear_action_required
 log PHASE "DÉMARRAGE DE L'AGENT AUTONOME"
 log INFO "Config : MAX_FEATURES=$MAX_FEATURES | MAX_FIX=$MAX_FIX_ATTEMPTS | EPIC_SIZE=$EPIC_SIZE"
@@ -2571,11 +2791,16 @@ if [ "$WORKFLOW_PHASE" = "alignment_pending" ]; then
   log INFO "Alignement validé — reprise de la boucle de développement."
 fi
 
-# Reprise après crash en post-project : sauter directement à post-project
-# (évite de re-générer la stratégie quand le projet est terminé)
+# Reprise post-DONE avec nouveaux tickets kanban
 SKIP_TO_POST_PROJECT=false
-if [ -f "$PROJECT_DIR/DONE.md" ] || [[ "$WORKFLOW_PHASE" =~ ^(done|crashed|stopped)$ ]]; then
-  log INFO "Reprise post-projet détectée (DONE.md ou workflow=$WORKFLOW_PHASE) — saut direct."
+if [ "$WORKFLOW_PHASE" = "done" ] && [ ! -f "$PROJECT_DIR/DONE.md" ] && has_todo_tickets; then
+  log INFO "Reprise post-DONE detectee — nouveaux tickets trouves, retour en boucle features."
+  workflow_transition "features"
+  RUN_STATUS="running"
+elif [ -f "$PROJECT_DIR/DONE.md" ] || [[ "$WORKFLOW_PHASE" =~ ^(done|crashed|stopped)$ ]]; then
+  # Reprise après crash en post-project : sauter directement à post-project
+  # (évite de re-générer la stratégie quand le projet est terminé)
+  log INFO "Reprise post-projet detectee (DONE.md ou workflow=$WORKFLOW_PHASE) — saut direct."
   SKIP_TO_POST_PROJECT=true
   RUN_STATUS="running"
 fi
@@ -2672,14 +2897,19 @@ fi
 # PHASE 2 — STRATÉGIE
 # ============================================================
 
-if [ "$SKIP_TO_POST_PROJECT" != true ] && ! grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
+if [ "$SKIP_TO_POST_PROJECT" != true ] && ! has_todo_tickets && ! grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
   workflow_transition "strategy"
   log PHASE "PHASE 2 — STRATÉGIE"
+
+  # Initialiser le kanban pour que la strategy écrive directement des tickets
+  init_kanban
 
   local_prompt=$(render_phase "02-strategy.md")
   run_claude "$local_prompt" 30 "$LOG_DIR/02-strategy.log" "strategy"
 
-  log INFO "Roadmap générée."
+  # Régénérer la vue ROADMAP.md depuis les tickets créés par la strategy
+  regenerate_roadmap_view
+  log INFO "Roadmap générée (kanban)."
   gh_sync_roadmap
 fi
 
@@ -2703,14 +2933,26 @@ log PHASE "PHASE 3 — BOUCLE DE DÉVELOPPEMENT"
 
 while [ $FEATURE_COUNT -lt $MAX_FEATURES ]; do
 
-  feature_raw=$(next_feature)
+  # --- Sélection du prochain ticket (kanban prioritaire, fallback legacy) ---
+  current_ticket=$(next_ticket)
+  if [ -n "$current_ticket" ]; then
+    feature_name=$(ticket_title "$current_ticket")
+    feature_raw="$feature_name"
+    # Déplacer en in-progress
+    move_ticket "$current_ticket" "in-progress"
+    current_ticket="$PROJECT_DIR/.orc/roadmap/in-progress/$(basename "$current_ticket")"
+  else
+    # Fallback legacy (ROADMAP.md plat)
+    feature_raw=$(next_feature)
+    current_ticket=""
+  fi
 
-  if [ -z "$feature_raw" ]; then
+  if [ -z "$feature_raw" ] && [ -z "$feature_name" ]; then
     log INFO "Roadmap vide — passage en phase d'évolution."
     break
   fi
 
-  feature_name=$(echo "$feature_raw" | sed 's/ |.*//')
+  [ -z "${feature_name:-}" ] && feature_name=$(echo "$feature_raw" | sed 's/ |.*//')
   feature_branch=$(branch_name "$feature_name")
 
   FEATURE_COUNT=$((FEATURE_COUNT + 1))
@@ -2730,7 +2972,13 @@ while [ $FEATURE_COUNT -lt $MAX_FEATURES ]; do
   if [ "$SKIP_CURRENT_FEATURE" = true ]; then
     log WARN "Feature '$feature_name' skippée par signal humain."
     timeline_update_last "skipped" 0
-    mark_feature_done_bash "$feature_name"  # Cocher pour ne pas la reprendre
+    # Déplacer le ticket en done (kanban) ou cocher (legacy)
+    if [ -n "$current_ticket" ] && [ -f "$current_ticket" ]; then
+      move_ticket "$current_ticket" "done"
+      regenerate_roadmap_view
+    else
+      mark_feature_done_bash "$feature_name"
+    fi
     run_in_project "git checkout main 2>/dev/null || true"
     continue
   fi
@@ -2747,7 +2995,7 @@ VEILLE CIBLÉE avant la feature : $feature_name
 1. Comment les concurrents gèrent cette fonctionnalité ? (WebSearch + WebFetch)
 2. Best practices UX pour ce type de feature
 3. APIs ou données publiques exploitables
-4. Mets à jour .orc/research/ et ajuste les specs dans .orc/ROADMAP.md si nécessaire
+4. Mets à jour .orc/research/ si nécessaire
 EOF
     )" "$MAX_TURNS_RESEARCH_EPIC" "$LOG_DIR/research-epic-$FEATURE_COUNT.log" "research-epic" "$feature_name" || {
       log WARN "Veille ciblée échouée ou timeout — on continue sans."
@@ -2790,6 +3038,19 @@ EOF
   plan_prompt=$(render_phase "03a-plan.md" \
     "FEATURE_NAME=$feature_name" \
     "N=$FEATURE_COUNT")
+  # Injecter le contenu détaillé du ticket kanban dans le plan
+  if [ -n "$current_ticket" ] && [ -f "$current_ticket" ]; then
+    local ticket_specs
+    ticket_specs=$(ticket_context "$current_ticket")
+    if [ -n "$ticket_specs" ]; then
+      plan_prompt="$plan_prompt
+
+TICKET DETAILLE (specifications, criteres, contexte) :
+$ticket_specs"
+      log INFO "Contenu ticket kanban injecté dans le prompt de planification."
+    fi
+  fi
+
   # Injecter le challenger dans le prompt de plan s'il existe
   if [ -f "${challenger_file:-}" ]; then
     plan_prompt="$plan_prompt
@@ -2811,6 +3072,19 @@ $(cat "$challenger_file")"
   impl_prompt=$(render_phase "03-implement.md" \
     "FEATURE_NAME=$feature_name" \
     "FEATURE_BRANCH=$feature_branch")
+
+  # Injecter le contenu détaillé du ticket kanban dans l'implémentation
+  if [ -n "$current_ticket" ] && [ -f "$current_ticket" ]; then
+    local ticket_specs
+    ticket_specs=$(ticket_context "$current_ticket")
+    if [ -n "$ticket_specs" ]; then
+      impl_prompt="$impl_prompt
+
+TICKET DETAILLE (specifications, criteres, contexte) :
+$ticket_specs"
+      log INFO "Contenu ticket kanban injecté dans le prompt d'implémentation."
+    fi
+  fi
 
   # Injecter le plan s'il a été produit
   if [ -f "$plan_file" ]; then
@@ -2875,7 +3149,10 @@ $challenger_enrichments"
   # --- Lookahead : lancer le challenger de la feature SUIVANTE en arrière-plan ---
   if [ "${ENABLE_CHALLENGER:-true}" = true ]; then
     local next_raw=""
-    next_raw=$(peek_feature 2)  # 2ème non-cochée = la suivante (la 1ère est en cours)
+    # Kanban: peek le 1er ticket todo (le courant est déjà en in-progress)
+    next_raw=$(peek_ticket 1)
+    # Fallback legacy
+    [ -z "$next_raw" ] && next_raw=$(peek_feature 2)
     if [ -n "$next_raw" ]; then
       local next_name="" next_count=0
       next_name=$(echo "$next_raw" | sed 's/ |.*//')
@@ -3237,8 +3514,13 @@ Exemples de problèmes : performance dégradée, bundle trop gros, couverture in
     fi
 
     log INFO "Feature '$feature_name' mergée."
-    # Cochage fiable de la roadmap (bash-based, en plus de la reflect phase)
-    mark_feature_done_bash "$feature_name"
+    # Déplacer le ticket en done (kanban) ou cocher (legacy)
+    if [ -n "$current_ticket" ] && [ -f "$current_ticket" ]; then
+      move_ticket "$current_ticket" "done"
+      regenerate_roadmap_view
+    else
+      mark_feature_done_bash "$feature_name"
+    fi
     # Changelog auto : ajouter l'entrée pour cette feature
     update_changelog "$feature_name" "$attempt"
     # Vérification fonctionnelle post-merge
@@ -3304,7 +3586,7 @@ PORT : ${qa_port}"
 
     # Mise à jour incrémentale du README (quick, modèle léger)
     run_claude "Mets à jour le README.md du projet pour refléter les features de l'Epic $epic_number.
-Lis .orc/ROADMAP.md pour voir les features cochées. Lis le README actuel.
+Lis .orc/ROADMAP.md pour voir les features terminées. Lis le README actuel.
 Ajoute/mets à jour la section 'Features' avec les fonctionnalités implémentées.
 Garde le README concis et à jour. Ne réécris pas tout — édite seulement ce qui a changé." \
       5 "$LOG_DIR/readme-update-epic-$epic_number.log" "reflect" "epic-$epic_number" || true
@@ -3362,9 +3644,12 @@ if [ ! -f "$PROJECT_DIR/DONE.md" ]; then
     evolve_prompt=$(render_phase "07-evolve.md")
     run_claude "$evolve_prompt" 30 "$LOG_DIR/07-evolve.log" "evolve"
 
-    if [ ! -f "$PROJECT_DIR/DONE.md" ] && grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null; then
+    # Régénérer la vue ROADMAP.md après evolve (l'IA a pu créer des tickets)
+    regenerate_roadmap_view
+
+    if [ ! -f "$PROJECT_DIR/DONE.md" ] && (has_todo_tickets || grep -q '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null); then
       # Compter les features ajoutées par l'IA
-      new_features=$(grep -c '^\- \[ \]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null || true)
+      new_features=$(count_todo_tickets)
       AI_ROADMAP_ADDS=$((AI_ROADMAP_ADDS + new_features))
       log INFO "Nouvelles features ajoutées par l'IA : $new_features (total IA: $AI_ROADMAP_ADDS)"
 
@@ -3469,9 +3754,6 @@ fi  # fin du guard SKIP_TO_POST_PROJECT self-improve
 # ============================================================
 
 log PHASE "DOCUMENTATION UTILISATEUR"
-# DEBUG TRACE — à retirer après diagnostic
-exec 2>>"$LOG_DIR/orchestrator-debug-trace.log"
-set -x
 update_phase_tracking "user-docs" ""
 run_claude "$(cat "$SCRIPT_DIR/phases/08-user-docs.md")" 15 "$LOG_DIR/08-user-docs.log" "user-docs" || {
   log WARN "Génération doc utilisateur échouée — pas grave."

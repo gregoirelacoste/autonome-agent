@@ -157,12 +157,63 @@ orc roadmap --full --tag adoption
 
 ### `orc roadmap <projet> [options]`
 
-Affiche la roadmap d'un projet spécifique (ROADMAP.md du projet).
+Affiche la roadmap kanban d'un projet (tickets par statut, triés par priorité).
+
+| Option | Description |
+|---|---|
+| *(aucune)* | Vue compacte (ID + titre + priorité + type + effort) |
+| `--detail` | + section Contexte de chaque ticket |
+| `--full` | + Spécification + Critères de validation |
 
 ```bash
 orc roadmap mon-app
 orc roadmap mon-app --detail
+orc roadmap mon-app --full
 ```
+
+### `orc roadmap ticket <projet> [options]`
+
+Ajoute un ticket au kanban du projet, assisté par l'IA. Pipeline en 3 phases :
+
+1. **Dialogue** : l'humain décrit son besoin, l'IA pose des questions de clarification
+2. **Analyse + Recherche + Rédaction** : l'IA analyse la cohérence avec le brief, recherche sur le web si pertinent, évalue la pertinence/faisabilité, rédige le ticket structuré
+3. **Review** : l'humain valide, édite, change la priorité, ou refuse
+
+| Option | Description |
+|---|---|
+| *(aucune)* | Mode interactif complet (dialogue + challenge IA) |
+| `--quick "description"` | Skip le dialogue, description directe |
+| `--type bugfix` | Pré-sélectionner le type (feature/bugfix/evolution/refactor) |
+| `--priority P0` | Forcer la priorité |
+
+```bash
+orc roadmap ticket mon-app                          # Interactif complet
+orc roadmap ticket mon-app --quick "ajouter export CSV"  # Mode rapide
+orc roadmap ticket mon-app --type bugfix --priority P0   # Bug critique
+orc r t mon-app                                     # Raccourci
+```
+
+Si le projet est terminé (DONE.md), le ticket archive DONE.md et propose de relancer.
+Si le projet tourne et le ticket est P0, une notification est injectée dans `human-notes.md`.
+
+### `orc roadmap brainstorm <projet>`
+
+Brainstorm IA pour planifier la prochaine itération d'un projet. Pipeline en 5 phases :
+
+1. **Vision** : dialogue interactif — frustrations, vision V2, priorités
+2. **Recherche** : audit du MVP, concurrence, tendances marché, features standards
+3. **Sélection** : l'humain choisit parmi 15-20 propositions (approuve, rejette, fusionne)
+4. **Rédaction** : l'IA écrit 10-15 tickets détaillés dans le kanban
+5. **Validation** : confirmation finale du lot
+
+```bash
+orc roadmap brainstorm mon-app       # Pipeline complet
+orc r brain mon-app                  # Raccourci
+orc r b mon-app                      # Raccourci court
+```
+
+Si le projet est terminé, le brainstorm archive DONE.md et propose de relancer.
+Utilise le modèle fort (`CLAUDE_MODEL_STRONG`) pour la phase recherche.
 
 ## Administration (`orc admin`)
 
@@ -215,6 +266,8 @@ Met à jour le template orc.
 | `orc db <nom>` | `orc dashboard <nom>` |
 | `orc l <nom>` | `orc agent logs <nom>` |
 | `orc r` | `orc roadmap` |
+| `orc r t <nom>` | `orc roadmap ticket <nom>` |
+| `orc r b <nom>` | `orc roadmap brainstorm <nom>` |
 | `orc w <nom>` | `orc watch <nom>` |
 | `orc c <nom>` | `orc chat <nom>` |
 

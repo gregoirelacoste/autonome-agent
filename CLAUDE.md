@@ -50,7 +50,12 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 ├── .orc/                    ← État orchestrateur + artéfacts (partiellement gitté)
 │   ├── config.sh            ← Personnalisé (gitté)
 │   ├── BRIEF.md             ← Copie du brief (gitté)
-│   ├── ROADMAP.md           ← Roadmap features (gitté)
+│   ├── ROADMAP.md           ← Vue auto-générée depuis le kanban (gitté)
+│   ├── roadmap/             ← Kanban tickets (source de vérité)
+│   │   ├── backlog/         ← Idées non priorisées
+│   │   ├── todo/            ← Prêt à implémenter (trié par priorité P0→P3)
+│   │   ├── in-progress/     ← En cours (max 1, géré par l'orchestrateur)
+│   │   └── done/            ← Terminé
 │   ├── codebase/            ← Doc technique pour l'IA (gitté)
 │   ├── research/            ← Veille marché (gitté)
 │   ├── state.json           ← Runtime (ignoré)
@@ -70,11 +75,15 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 - `orc agent start|stop|status|logs <nom>` — gestion des projets
 - `orc agent logs <nom> --debug` — actions Claude en temps réel (tool calls, texte, erreurs — activé par défaut via `ORC_DEBUG=true`)
 - `orc agent dashboard <nom>` — dashboard live avec progression, roadmap, activité (auto-refresh 5s)
-- `orc roadmap [--detail|--full] [--priority P1] [--tag x]` — suivi roadmap
+- `orc roadmap [--detail|--full] [--priority P1] [--tag x]` — suivi roadmap orc
+- `orc roadmap <projet> [--detail|--full]` — kanban d'un projet
+- `orc roadmap ticket <projet> [--quick "desc"] [--type x] [--priority Px]` — ajouter un ticket (dialogue + challenge IA)
+- `orc roadmap brainstorm <projet>` — brainstorm V2 (IA + recherche web + 10-15 tickets)
 - `orc admin config|model|budget|key|version` — administration
 - `orc docs [sujet]` — documentation utilisateur
 - `orc watch <nom> [--interval 3m] [--interactive]` — opérateur autonome : surveille, corrige, relance. Arrêt : `orc watch stop <nom>` ou Ctrl+C (raccourci `orc w`)
 - `orc s` / `orc r` / `orc l <nom>` / `orc dash <nom>` / `orc w <nom>` — raccourcis (status, roadmap, logs, dashboard, watch)
+- `orc r t <projet>` / `orc r b <projet>` — raccourcis ticket / brainstorm
 
 ### Développement
 - `bash -n orchestrator.sh` — vérifier la syntaxe sans exécuter
@@ -96,7 +105,7 @@ orc/                         ← CE REPO (template, jamais modifié par un proje
 
 ## Règles de modification
 
-- **Ne jamais casser la reprise** : le script doit pouvoir reprendre à tout moment (guards sur CLAUDE.md, INDEX.md, ROADMAP.md)
+- **Ne jamais casser la reprise** : le script doit pouvoir reprendre à tout moment (guards sur CLAUDE.md, INDEX.md, kanban todo/)
 - **Ne jamais hardcoder de valeurs** : tout doit être dans `config.default.sh`
 - **Les phases sont des fichiers séparés** : modifier un prompt = modifier un fichier .md, pas le bash
 - **Placeholders** : `{{VAR}}` dans les phases, substitués par `render_phase()`
@@ -140,7 +149,7 @@ Avant chaque invocation, `run_claude()` estime le coût probable (~4000 tokens i
 Substitue `{{VAR}}` dans les prompts. Attention : la substitution bash `${content//pattern/replacement}` casse si `replacement` contient `/` ou `\`. Pour les outputs build/test, utiliser `write_fix_prompt()` à la place.
 
 ### Reprise après crash
-Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `.orc/research/INDEX.md` existe ? → skip research. Features non-cochées dans `.orc/ROADMAP.md` ? → skip strategy. `state.json` → restaure les compteurs.
+Séquence de guards : `CLAUDE.md` existe ? → skip bootstrap. `.orc/research/INDEX.md` existe ? → skip research. Tickets dans `.orc/roadmap/todo/` ou features dans `ROADMAP.md` ? → skip strategy. `state.json` → restaure les compteurs.
 
 ### Contrôle humain mid-run
 - `.orc/human-notes.md` : lu et injecté dans le prompt avant chaque feature
@@ -203,11 +212,14 @@ Pour diagnostiquer un run en cours sans relancer : lire `.orc/logs/orc-debug-liv
 ### Statut de sortie du run
 `run_status` dans `state.json` distingue 5 états : `running` (en cours), `completed` (fin normale), `crashed` (erreur non rattrapée ou signal), `stopped` (arrêt demandé par l'utilisateur), `alignment_pending` (attente wizard d'alignement). Écrit par `cleanup()` (→ crashed si encore running), la fin du script (→ completed), les handlers de stop (→ stopped), ou la fin d'un cycle evolve avec `ALIGNMENT_CHECK=true` (→ alignment_pending). Affiché dans `orc status`, `orc dashboard` via `get_run_status()` dans `orc-agent.sh`.
 
-### Cochage fiable de ROADMAP.md
-`mark_feature_done_bash()` coche la feature dans ROADMAP.md via `sed` après chaque merge réussi. Double sécurité avec le cochage par Claude en phase reflect.
+### Kanban projet (.orc/roadmap/)
+`.orc/roadmap/{backlog,todo,in-progress,done}/` — chaque ticket est un fichier `NNN-slug.md` avec frontmatter YAML (id, title, priority, type, effort, tags, epic, source) + sections Contexte/Spécification/Critères/Notes. `next_ticket()` lit `todo/` trié par priorité P0→P3. `move_ticket()` déplace entre dossiers. `regenerate_roadmap_view()` génère `ROADMAP.md` comme vue compat dashboard/status. Migration auto des projets existants via `migrate_to_kanban()`. Le contenu riche du ticket est injecté dans les prompts de plan et d'implémentation.
+
+### Ticket et brainstorm (orc-roadmap.sh)
+`orc roadmap ticket <projet>` — pipeline hybride : dialogue interactif (session Claude) → analyse + recherche web + rédaction (one-shot Claude avec prompt `ticket-challenge.md`) → review humain. `orc roadmap brainstorm <projet>` — 5 phases : vision (dialogue) → recherche + propositions (one-shot, `brainstorm-research.md`) → sélection (dialogue) → rédaction (one-shot, `brainstorm-write.md`) → validation. Les deux commandes gèrent le post-DONE (archive DONE.md, reset workflow) et le hot injection (P0 → human-notes.md).
 
 ### Dashboard live
-`orc dashboard <projet>` (raccourci `orc dash`) affiche un dashboard live auto-refresh (5s) avec : barre de progression, feature en cours, coût, ETA, roadmap colorée, dernière activité. Basé sur la lecture de `state.json`, `tokens.json`, ROADMAP.md et `orchestrator.log`.
+`orc dashboard <projet>` (raccourci `orc dash`) affiche un dashboard live auto-refresh (5s) avec : barre de progression, feature en cours, coût, ETA, roadmap colorée, dernière activité. Basé sur la lecture de `state.json`, `tokens.json`, ROADMAP.md (vue auto-générée) et `orchestrator.log`.
 
 ### Connaissance projet (.orc/codebase/ + stack-conventions.md)
 - `.orc/codebase/INDEX.md` : carte sémantique du projet (max 40 lignes). Lu AVANT chaque implémentation.
@@ -265,15 +277,21 @@ La phase evolve (`07-evolve.md`) évalue 6 critères /30 : parcours utilisateur 
 
 ## Roadmap
 
-Les items de roadmap sont des fichiers `.md` individuels dans `roadmap/`.
-Le statut est déterminé par le sous-dossier (`backlog/`, `planned/`, `in-progress/`, `done/`).
-
-Chaque item a un frontmatter YAML avec : `id`, `priority` (P0-P3), `type`, `effort` (XS-XL), `tags`, `epic`, `depends`.
-
-- **Consulter** : `agent roadmap` (compact), `--detail`, `--full`
+### Roadmap orc (développement du template)
+Les items sont des fichiers `.md` dans `roadmap/{backlog,planned,in-progress,done}/`.
+Frontmatter YAML : `id`, `priority` (P0-P3), `type`, `effort` (XS-XL), `tags`, `epic`, `depends`.
+- **Consulter** : `orc roadmap` (compact), `--detail`, `--full`
 - **Filtrer** : `--priority P1`, `--tag adoption`, `--epic adopt-mode`
 - **Créer un item** : copier `roadmap/TEMPLATE.md`, incrémenter l'ID
 - **Changer de statut** : `mv roadmap/planned/ROADMAP-NNN.md roadmap/in-progress/`
+
+### Roadmap projet (kanban dans .orc/roadmap/)
+Chaque projet a son propre kanban : `.orc/roadmap/{backlog,todo,in-progress,done}/NNN-slug.md`.
+Format ticket : frontmatter YAML (id, title, priority, type, effort, tags, epic, source) + sections Contexte/Spécification/Critères/Notes.
+- **Consulter** : `orc roadmap <projet>` (kanban), `--detail`, `--full`
+- **Ajouter un ticket** : `orc roadmap ticket <projet>` (dialogue + challenge IA)
+- **Brainstorm V2** : `orc roadmap brainstorm <projet>` (10-15 tickets avec recherche web)
+- **L'orchestrateur gère** : `next_ticket()` lit par priorité, `move_ticket()` déplace, `regenerate_roadmap_view()` génère la vue compat
 
 ## Versioning
 

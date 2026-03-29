@@ -19,9 +19,10 @@ Migration auto : migrate_config() ajoute les paramètres manquants au démarrage
 ## Intervention humaine
 - `PAUSE_EVERY_N_FEATURES=0` — pause toutes les N features (0 = jamais)
 - `REQUIRE_HUMAN_APPROVAL=false` — validation avant chaque merge
-- `AUTO_EVOLVE_ROADMAP=true` — l'IA peut ajouter des features
+- `AUTO_EVOLVE_ROADMAP=true` — l'IA peut ajouter des tickets au kanban
 - `MAX_EVOLVE_CYCLES=2` — cycles evolve max (0 = illimité)
-- `MAX_AI_ROADMAP_ADDS=5` — features ajoutées par l'IA avant pause
+- `MAX_AI_ROADMAP_ADDS=5` — tickets ajoutés par l'IA au kanban avant pause
+- `ALIGNMENT_CHECK=true` — checkpoint d'alignement entre cycles evolve
 
 ## Notifications
 - `NOTIFY_COMMAND=""` — commande de notification (ex: notify-send, slack webhook)

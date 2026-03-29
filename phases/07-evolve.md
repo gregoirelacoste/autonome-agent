@@ -29,10 +29,35 @@ PHASE ÉVOLUTION — Toutes les features de la ROADMAP sont terminées.
 ### Option A : Améliorations ciblées
 Identifie les features qui augmenteraient le plus le score de maturité.
 
-Ajoute-les à .orc/ROADMAP.md. Pour chaque ajout, tu DOIS :
-- Citer quel critère de maturité cette feature améliore
-- Citer la section du .orc/BRIEF.md que cette feature sert
-- Limiter les ajouts à 5 features maximum par cycle d'évolution
+Crée des tickets dans `.orc/roadmap/todo/` (un fichier par feature). Pour chaque ticket :
+
+Format fichier : `NNN-slug.md` (NNN = prochain numéro séquentiel après les tickets existants)
+
+```yaml
+---
+id: NNN
+title: "Titre concis"
+priority: P1
+type: feature|bugfix|evolution
+effort: S|M|L
+tags: []
+epic: evolve-cycle-N
+created: YYYY-MM-DD
+source: evolve
+---
+
+## Contexte
+Quel critère de maturité cette feature améliore.
+Quelle section du brief elle sert.
+
+## Spécification
+Ce qui doit être implémenté.
+
+## Critères de validation
+- [ ] Critère testable
+```
+
+Limiter les ajouts à **5 tickets maximum** par cycle d'évolution.
 
 ### Option B : Projet complet
 Crée DONE.md avec :

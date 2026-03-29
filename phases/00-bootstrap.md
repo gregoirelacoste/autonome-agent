@@ -69,7 +69,11 @@ Tu démarres un nouveau projet autonome.
    - review-own-code.md (auto-review avant commit)
    - stack-conventions.md (rempli avec les conventions de la stack choisie)
 
-6. Crée un .orc/ROADMAP.md initial vide (sera rempli après la recherche) :
+6. Initialise la structure kanban et le ROADMAP.md :
+   ```bash
+   mkdir -p .orc/roadmap/{backlog,todo,in-progress,done}
+   ```
+   Crée `.orc/ROADMAP.md` :
    ```
    # Roadmap
    > Sera structurée après la phase de recherche initiale.

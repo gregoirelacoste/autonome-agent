@@ -11,22 +11,31 @@ ton travail (implémentation, rétrospective, debug), crée un item de roadmap.
 
 ### Où écrire
 
-Les items de roadmap vont dans le dossier `roadmap/` du template :
+**Pour les projets générés** (quand tu travailles dans un workspace projet) :
+```
+.orc/roadmap/
+├── backlog/        # Idées non priorisées (défaut pour les découvertes)
+├── todo/           # Prêtes à implémenter (triées par priorité P0→P3)
+├── in-progress/    # En cours (géré par l'orchestrateur)
+└── done/           # Terminées
+```
 
+**Pour le template orc** (quand tu travailles sur orc lui-même) :
 ```
 roadmap/
-├── backlog/        # Idées non priorisées (défaut pour les découvertes)
+├── backlog/        # Idées non priorisées
 ├── planned/        # Priorisées, prêtes à implémenter
 ├── in-progress/    # En cours
 └── done/           # Terminées
 ```
 
 **Par défaut, les découvertes vont dans `backlog/`.**
-Ne place dans `planned/` que si c'est un prérequis bloquant identifié.
+Ne place dans `todo/` ou `planned/` que si c'est un prérequis bloquant identifié.
 
 ### Format obligatoire
 
-Fichier : `roadmap/<status>/ROADMAP-NNN-slug-court.md`
+**Projet** : `NNN-slug-court.md` dans `.orc/roadmap/<status>/`
+**Template orc** : `ROADMAP-NNN-slug-court.md` dans `roadmap/<status>/`
 
 ```markdown
 ---

@@ -44,7 +44,7 @@ Comme pause, mais l'orchestrateur s'arrête complètement après la feature. Rep
 touch ~/projects/mon-projet/.orc/skip-feature
 ```
 
-Abandonne la feature en cours (la coche dans la ROADMAP) et passe à la suivante. Utile quand une feature est bloquée sans vouloir stopper tout le run.
+Abandonne la feature en cours (déplace le ticket en `done`) et passe à la suivante. Utile quand une feature est bloquée sans vouloir stopper tout le run.
 
 ### Arrêt immédiat
 
@@ -102,6 +102,31 @@ Quand `ALIGNMENT_CHECK=true` (défaut), l'orchestrateur s'arrête après chaque 
 4. Les réponses sont injectées dans les features du prochain cycle
 
 Désactiver : `ALIGNMENT_CHECK=false` dans `.orc/config.sh`.
+
+## Ajout de tickets (`orc roadmap ticket`)
+
+L'humain peut ajouter des tickets au kanban d'un projet à tout moment, même pendant un run :
+
+```bash
+orc roadmap ticket mon-projet                        # Dialogue + challenge IA
+orc roadmap ticket mon-projet --quick "export CSV"   # Mode rapide
+orc r t mon-projet                                   # Raccourci
+```
+
+Le pipeline IA challenge le ticket (pertinence, faisabilité, doublons), recherche sur le web si pertinent, et rédige un ticket structuré. L'humain valide avant l'ajout au kanban.
+
+**Hot injection** : les tickets P0 ajoutés pendant un run sont signalés via `human-notes.md` et pris en priorité au prochain cycle.
+
+## Brainstorm (`orc roadmap brainstorm`)
+
+Pour planifier une nouvelle itération (surtout après un projet "terminé") :
+
+```bash
+orc roadmap brainstorm mon-projet   # Pipeline complet 5 phases
+orc r brain mon-projet              # Raccourci
+```
+
+L'IA dialogue avec l'humain sur sa vision, audite le MVP, recherche la concurrence, propose 15-20 tickets, puis l'humain sélectionne ceux à garder. Les tickets validés sont écrits dans le kanban.
 
 ## Modes d'autonomie
 

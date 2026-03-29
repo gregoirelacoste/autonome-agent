@@ -54,7 +54,7 @@ Les signaux locaux (`.orc/pause-requested`, etc.) fonctionnent toujours en paral
 GITHUB_SYNC_ROADMAP=true
 ```
 
-Miroir push-only : chaque feature de ROADMAP.md est reflétée comme GitHub Issue. L'orchestrateur ne lit jamais les issues comme source de features — ROADMAP.md reste la source de vérité.
+Miroir push-only : chaque feature de ROADMAP.md (vue auto-générée depuis le kanban `.orc/roadmap/`) est reflétée comme GitHub Issue. L'orchestrateur ne lit jamais les issues comme source de features — le kanban local reste la source de vérité.
 
 ### GITHUB_FEEDBACK
 

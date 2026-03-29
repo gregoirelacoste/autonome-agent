@@ -42,9 +42,9 @@ Chaque projet a sa propre configuration dans `~/projects/<nom>/.orc/config.sh`. 
 |---|---|---|
 | `PAUSE_EVERY_N_FEATURES` | 0 | Pause toutes les N features (0 = jamais) |
 | `REQUIRE_HUMAN_APPROVAL` | false | Valider chaque merge manuellement |
-| `AUTO_EVOLVE_ROADMAP` | true | L'IA peut ajouter des features à la roadmap |
+| `AUTO_EVOLVE_ROADMAP` | true | L'IA peut ajouter des tickets au kanban |
 | `MAX_EVOLVE_CYCLES` | 2 | Cycles d'évolution max de la roadmap |
-| `MAX_AI_ROADMAP_ADDS` | 5 | Features max ajoutées par l'IA à la roadmap |
+| `MAX_AI_ROADMAP_ADDS` | 5 | Tickets max ajoutés par l'IA au kanban avant pause |
 | `ALIGNMENT_CHECK` | true | Checkpoint d'alignement brief/code/roadmap entre les cycles evolve. Génère un rapport et lance un wizard interactif au prochain `start` |
 
 ### Recherche

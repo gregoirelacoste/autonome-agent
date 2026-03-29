@@ -50,16 +50,16 @@ Si tu as répété un pattern manuellement plus de 2 fois,
 crée un skill dans .claude/skills/.
 Si un skill existant était inadapté, mets-le à jour.
 
-### 5. .orc/ROADMAP.md
+### 5. Roadmap
 
-Coche la feature terminée.
 Si l'implémentation t'a révélé de nouvelles dépendances,
 features nécessaires, bugs ou améliorations :
-- Crée un item dans `roadmap/backlog/` en suivant le format
-  défini dans le skill `roadmap-item.md`
-- Chaque item = un fichier ROADMAP-NNN-slug.md avec frontmatter YAML
+- Crée un ticket dans `.orc/roadmap/backlog/` avec le format kanban :
+  Fichier `NNN-slug.md` avec frontmatter YAML (id, title, priority, type, effort, tags, epic, source: reflect, created)
+  + sections Contexte, Spécification, Critères de validation
 - Assigne une priorité (P0-P3), un type, un effort estimé, des tags
 - Référence la feature courante dans la section Contexte
+- NNN = prochain numéro séquentiel (regarde les fichiers existants dans .orc/roadmap/)
 
 ### 6. Architecture & Sécurité
 

@@ -20,29 +20,52 @@ Tu as fait ta recherche initiale. Transforme-la en plan d'action.
 Si le score total est < 15/25, écris les questions manquantes dans .orc/logs/brief-scoring.md
 et ajoute des hypothèses raisonnables pour combler les manques. Note-les dans CLAUDE.md.
 
-### Étape 2 : Roadmap MVP-first
+### Étape 2 : Roadmap MVP-first (kanban)
 
-Produis une .orc/ROADMAP.md structurée en 2 phases :
+Crée la structure kanban si elle n'existe pas : `mkdir -p .orc/roadmap/{backlog,todo,in-progress,done}`
 
-```
-## MVP — Fonctionnel minimum (5-8 features max)
-Objectif : un utilisateur peut [action principale du brief] de bout en bout.
-- [ ] Feature 1 — description | critères d'acceptance
-- [ ] Feature 2 — description | critères d'acceptance
-...
+Produis des **fichiers tickets** dans `.orc/roadmap/todo/` (un fichier par feature).
 
-## Améliorations — Post-MVP (optionnel, si temps/budget)
-- [ ] Feature N — description | critères d'acceptance
+**Format de chaque fichier** : `NNN-slug-court.md` (NNN = 001, 002, etc.)
+
+```yaml
+---
+id: NNN
+title: "Titre concis et orienté action"
+priority: P0|P1|P2|P3
+type: feature
+effort: XS|S|M|L|XL
+tags: [domaine, technique]
+epic: mvp|ameliorations
+created: YYYY-MM-DD
+source: strategy
+---
+
+## Contexte
+Pourquoi cette feature. Cite le brief et la recherche si pertinent.
+
+## Spécification
+Ce qui doit être implémenté concrètement. Sois précis : fichiers, APIs, comportement.
+
+## Critères de validation
+- [ ] Critère testable 1
+- [ ] Critère testable 2
+
+## Notes
+Insights de la recherche pertinents pour l'implémentation.
 ```
 
 Règles :
-- **Le MVP DOIT être fonctionnel seul** — pas de dépendance vers les features post-MVP
-- Chaque feature MVP DOIT contribuer au parcours utilisateur principal
-- Les quick wins (haute valeur, faible effort) en premier dans le MVP
-- Les features de fondation technique avant les features avancées
-- Critères d'acceptance = comment vérifier que c'est fait (testable)
+- **MVP (P0/P1)** : 5-8 features max, fonctionnel seul, epic: mvp
+- **Améliorations (P2/P3)** : optionnel si temps/budget, epic: ameliorations
+- Le MVP DOIT être fonctionnel seul — pas de dépendance vers P2/P3
+- Chaque feature MVP contribue au parcours utilisateur principal
+- Quick wins (haute valeur, faible effort) = P0
+- Features de fondation technique avant les features avancées
+- Critères testables (pas vagues)
 - Chaque feature référence un insight de .orc/research/ si pertinent
-- **Maximum 15 features totales** (MVP + améliorations) — ne pas over-scoper
+- **Maximum 15 features totales** — ne pas over-scoper
+- L'effort est réaliste (XS=<1h, S=1-4h, M=4h-2j, L=2-5j, XL=>5j)
 
 Mets à jour CLAUDE.md avec les patterns techniques
 découverts pendant la recherche (APIs à utiliser, conventions du domaine, etc.)

@@ -122,7 +122,9 @@ Quel que soit le mode, le workspace créé est identique :
 ├── CLAUDE.md                ← Guidelines IA (auto-généré)
 ├── .claude/skills/          ← Skills agent (enrichies au fil du run)
 ├── .orc/                    ← État + artéfacts orchestrateur
-│   ├── config.sh, BRIEF.md, ROADMAP.md
+│   ├── config.sh, BRIEF.md
+│   ├── roadmap/{backlog,todo,in-progress,done}/  ← Kanban tickets
+│   ├── ROADMAP.md                                ← Vue auto-générée
 │   ├── codebase/, research/
 │   ├── state.json, tokens.json, logs/
 │   └── ...

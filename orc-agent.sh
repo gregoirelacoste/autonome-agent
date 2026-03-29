@@ -4,7 +4,7 @@
 # ============================================================
 #
 # Fonctions : cmd_new, cmd_start, cmd_stop, cmd_restart,
-#             cmd_status, cmd_logs, cmd_roadmap, cmd_update
+#             cmd_status, cmd_logs, cmd_roadmap, cmd_chat, cmd_watch
 #
 # Variables attendues de orc.sh :
 #   ORC_DIR, PROJECTS_DIR (via env ou défaut),
@@ -1004,27 +1004,16 @@ cmd_logs() {
 # COMMANDE : update
 # ============================================================
 
-cmd_update() {
-  printf "${BOLD}Mise à jour du template...${NC}\n"
-
-  if [ -d "$ORC_DIR/.git" ]; then
-    git -C "$ORC_DIR" pull --ff-only
-    printf "${GREEN}Template mis à jour.${NC}\n"
-    printf "${DIM}Note : les workspaces existants ne sont pas affectés.${NC}\n"
-  else
-    die "$ORC_DIR n'est pas un repo git."
-  fi
-}
-
 # ============================================================
 # COMMANDE : chat
 # ============================================================
 
 cmd_chat() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage : orc chat <nom> [--prompt \"directive\"]"
+  if [ -n "$name" ] && [ "${name#-}" = "$name" ]; then shift
+  else name=$(infer_project_from_cwd) || die "Usage : orc chat <nom> [--prompt \"directive\"]"
+  fi
   require_project "$name"
-  shift || true
 
   # Parse options
   local user_prompt=""
@@ -1249,6 +1238,13 @@ effort_sort_key() {
 }
 
 cmd_roadmap() {
+  # Si le premier arg est un nom de projet existant → roadmap projet
+  if [ -n "${1:-}" ] && [ "${1#-}" = "$1" ] && [ -d "$(project_dir "$1")" ]; then
+    cmd_project_roadmap "$@"
+    return
+  fi
+
+  # Sinon : roadmap orc (template)
   local verbosity="compact"
   local filter_priority="" filter_tag="" filter_epic="" filter_type="" filter_status=""
 
@@ -1261,7 +1257,7 @@ cmd_roadmap() {
       --epic)      filter_epic="${2:-}"; shift 2 ;;
       --type)      filter_type="${2:-}"; shift 2 ;;
       --status)    filter_status="${2:-}"; shift 2 ;;
-      -h|--help)   cmd_roadmap_help; return ;;
+      -h|--help)   orc_help; return ;;
       *) die "Option inconnue : $1. Voir : orc roadmap --help" ;;
     esac
   done
@@ -1442,15 +1438,35 @@ cmd_roadmap() {
 
 cmd_project_roadmap() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage : orc roadmap <projet>"
+  local verbosity="compact"
+  shift || true
+
+  [ -z "$name" ] && die "Usage : orc roadmap <projet> [--detail|--full]"
   require_project "$name"
+
+  # Parser les options
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --detail) verbosity="detail"; shift ;;
+      --full)   verbosity="full"; shift ;;
+      *) shift ;;
+    esac
+  done
 
   local dir
   dir=$(project_dir "$name")
+
+  # Kanban ? Si le dossier .orc/roadmap/ existe avec du contenu
+  if [ -d "$dir/.orc/roadmap/todo" ] || [ -d "$dir/.orc/roadmap/done" ]; then
+    kanban_display "$dir" "$name" "$verbosity"
+    return
+  fi
+
+  # Fallback : affichage legacy (ROADMAP.md plat)
   local roadmap_file="$dir/.orc/ROADMAP.md"
 
   if [ ! -f "$roadmap_file" ]; then
-    die "Pas de ROADMAP.md pour '$name' (le projet n'a peut-être pas encore démarré)"
+    die "Pas de ROADMAP.md pour '$name' (le projet n'a peut-etre pas encore demarre)"
   fi
 
   local done_count todo_count
@@ -1463,7 +1479,6 @@ cmd_project_roadmap() {
   printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
   echo ""
 
-  # Afficher les features avec coloration
   while IFS= read -r line; do
     if [[ "$line" =~ ^-\ \[x\] ]]; then
       printf "  ${GREEN}%s${NC}\n" "$line"
@@ -1481,33 +1496,6 @@ cmd_project_roadmap() {
   echo ""
   printf "${DIM}Fichier : %s${NC}\n\n" "$roadmap_file"
 }
-
-cmd_roadmap_help() {
-  echo ""
-  printf "${BOLD}orc roadmap — Suivi des roadmaps${NC}\n"
-  echo ""
-  printf "  ${BOLD}Projet :${NC}\n"
-  printf "  ${CYAN}orc roadmap <projet>${NC}              Roadmap d'un projet (ROADMAP.md)\n"
-  echo ""
-  printf "  ${BOLD}Template orc :${NC}\n"
-  printf "  ${CYAN}orc roadmap${NC}                       Vue compacte (roadmap orc)\n"
-  printf "  ${CYAN}orc roadmap --detail${NC}              + contexte, dépendances\n"
-  printf "  ${CYAN}orc roadmap --full${NC}                + specs, critères\n"
-  echo ""
-  printf "  ${BOLD}Filtres (roadmap orc) :${NC}\n"
-  printf "  ${CYAN}--priority P0|P1|P2|P3${NC}           Par priorité\n"
-  printf "  ${CYAN}--tag <tag>${NC}                      Par tag\n"
-  printf "  ${CYAN}--epic <epic>${NC}                    Par epic\n"
-  printf "  ${CYAN}--type <type>${NC}                    Par type (feature, bugfix, etc.)\n"
-  printf "  ${CYAN}--status <status>${NC}                Par statut (planned, in-progress, etc.)\n"
-  echo ""
-  printf "  ${DIM}Filtres combinables : orc roadmap --priority P1 --tag adoption${NC}\n"
-  echo ""
-}
-
-# ============================================================
-# COMMANDE : help agent
-# ============================================================
 
 # ============================================================
 # COMMANDE : adopt (adopter un projet existant)
@@ -1903,12 +1891,13 @@ cmd_dashboard() {
 
 cmd_watch() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage : orc watch <nom> [--interval 3m] [--interactive]"
 
   # Sous-commande stop
   if [ "$name" = "stop" ]; then
     local target="${2:-}"
-    [ -z "$target" ] && die "Usage : orc watch stop <nom>"
+    if [ -z "$target" ]; then
+      target=$(infer_project_from_cwd) || die "Usage : orc watch stop <nom>"
+    fi
     require_project "$target"
     local target_dir
     target_dir=$(project_dir "$target")
@@ -1936,8 +1925,13 @@ cmd_watch() {
     return 0
   fi
 
+  # Auto-détection du projet si pas de nom (ou si le premier arg est une option)
+  if [ -z "$name" ] || [ "${name#-}" != "$name" ]; then
+    name=$(infer_project_from_cwd) || die "Usage : orc watch <nom> [--interval 3m] [--interactive]"
+  else
+    shift || true
+  fi
   require_project "$name"
-  shift || true
 
   local interval="3m"
   local interactive=false
@@ -2075,7 +2069,6 @@ agent_dispatch() {
     env)       cmd_env "$@" ;;
     adopt)     cmd_adopt "$@" ;;
     watch)     cmd_watch "$@" ;;
-    update)    cmd_update ;;
     help|-h|--help) cmd_agent_help ;;
     *) die "Commande inconnue : agent $subcmd. Voir : orc agent help" ;;
   esac

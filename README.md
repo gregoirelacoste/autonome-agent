@@ -118,6 +118,15 @@ L'orchestrateur tourne en background. Le code est généré dans `~/projects/mon
 ### 5. Intervenir en cours de route
 
 ```bash
+# Ajouter un ticket (dialogue + challenge IA)
+./orc.sh roadmap ticket mon-projet
+
+# Ajouter un ticket rapide
+./orc.sh roadmap ticket mon-projet --quick "ajouter export CSV" --priority P1
+
+# Brainstorm V2 (10-15 tickets avec recherche web)
+./orc.sh roadmap brainstorm mon-projet
+
 # Injecter des notes que Claude lira avant la prochaine feature
 vim ~/projects/mon-projet/.orc/human-notes.md
 

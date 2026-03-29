@@ -19,7 +19,7 @@ FEATURE À IMPLÉMENTER : {{FEATURE_NAME}}
    Respecte-les. Si un anti-pattern est listé, ne le fais PAS.
 4. Le code existant lié à cette feature
 5. .orc/research/INDEX.md pour le contexte marché
-6. La spec de cette feature dans .orc/ROADMAP.md
+6. Le ticket détaillé (injecté ci-dessus dans TICKET DETAILLE, ou dans .orc/ROADMAP.md)
 7. Les insights concurrents dans .orc/research/competitors/SYNTHESIS.md
 
 ### Anti-duplication — checklist AVANT de créer du code
@@ -47,4 +47,4 @@ Avant de créer une nouvelle fonction, un nouveau composant ou un nouveau helper
 7. Commite de façon atomique avec un message descriptif
 
 Si un concurrent fait mieux que notre spec sur cette feature,
-adapte l'implémentation et note le changement dans .orc/ROADMAP.md.
+adapte l'implémentation et note le changement dans les logs.

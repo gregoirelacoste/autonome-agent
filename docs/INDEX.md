@@ -8,12 +8,12 @@
 | Document | Couvre | Dernière MàJ |
 |---|---|---|
 | [getting-started.md](getting-started.md) | Installation, premier projet, lancement | v0.6.0 |
-| [init-modes.md](init-modes.md) | Les 3 modes d'init : wizard, --brief, --skip-brief | v0.6.0 |
-| [commands-reference.md](commands-reference.md) | Toutes les commandes CLI avec exemples | v0.6.0 |
-| [configuration.md](configuration.md) | Paramètres config.sh, modes d'autonomie | v0.6.0 |
-| [github-integration.md](github-integration.md) | Options GitHub : PR, tracking, signals, CI, releases | v0.6.0 |
-| [human-controls.md](human-controls.md) | Pause, stop, notes, feedback, signaux | v0.6.0 |
-| [faq.md](faq.md) | Questions fréquentes et troubleshooting | v0.6.0 |
+| [init-modes.md](init-modes.md) | Les 3 modes d'init : wizard, --brief, --skip-brief | v0.7.0 |
+| [commands-reference.md](commands-reference.md) | Toutes les commandes CLI avec exemples | v0.7.0 |
+| [configuration.md](configuration.md) | Paramètres config.sh, modes d'autonomie | v0.7.0 |
+| [github-integration.md](github-integration.md) | Options GitHub : PR, tracking, signals, CI, releases | v0.7.0 |
+| [human-controls.md](human-controls.md) | Pause, stop, notes, feedback, signaux, ticket, brainstorm | v0.7.0 |
+| [faq.md](faq.md) | Questions fréquentes et troubleshooting | v0.7.0 |
 
 ## Documents techniques (dans codebase/)
 

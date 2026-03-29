@@ -160,18 +160,46 @@ research/
 **Ce que Claude fait :**
 1. **Score le brief** sur 5 critères (clarté, scope, stack, succès, users) — note /25. Si < 15/25, ajoute des hypothèses pour combler les manques
 2. Croise `BRIEF.md` (vision immuable) avec `research/INDEX.md` (données marché)
-3. Structure `ROADMAP.md` en 2 phases : **MVP** (5-8 features) + **Améliorations** (optionnel, max 15 features totales)
-4. Chaque feature référence un insight de la recherche
-5. Ordonne par : impact utilisateur × faisabilité
-6. Quick wins en premier, MVP fonctionnel seul
+3. Crée des **tickets kanban** dans `.orc/roadmap/todo/` : **MVP** (P0/P1, 5-8 features) + **Améliorations** (P2/P3, optionnel, max 15 features totales)
+4. Chaque ticket référence un insight de la recherche
+5. Ordonne par priorité × faisabilité
+6. Quick wins (P0) en premier, MVP fonctionnel seul
 
-**Format ROADMAP.md :**
-```markdown
-## Epic 1 : [nom]
-Justification : [référence research/...]
-- [ ] Feature 1.1 — description | critères d'acceptance
-- [ ] Feature 1.2 — ...
+**Format ticket kanban** (un fichier `.orc/roadmap/todo/NNN-slug.md` par feature) :
+```yaml
+---
+id: 1
+title: "Titre orienté action"
+priority: P1
+type: feature
+effort: M
+tags: [domaine, technique]
+epic: mvp
+created: 2026-03-29
+source: strategy
+---
+
+## Contexte
+Pourquoi cette feature. Cite le brief et la recherche.
+
+## Spécification
+Ce qui doit être implémenté concrètement.
+
+## Critères de validation
+- [ ] Critère testable
 ```
+
+**Structure kanban projet :**
+```
+.orc/roadmap/
+├── backlog/        # Idées non priorisées
+├── todo/           # Prêt à implémenter, trié par priorité P0→P3
+├── in-progress/    # En cours (max 1, géré par l'orchestrateur)
+└── done/           # Terminé
+```
+
+`ROADMAP.md` est **auto-généré** depuis le kanban (vue compatible dashboard/status).
+Migration automatique des projets existants au premier démarrage.
 
 ---
 
@@ -324,12 +352,20 @@ parcours utilisateur complet, CRUD fonctionnel, gestion d'erreurs, UX cohérente
 couverture de tests, documentation.
 
 1. **Score >= 24/30** → projet terminé → crée `DONE.md` → déploiement auto si `DEPLOY_COMMAND` configuré
-2. **Score >= 18/30** → ajoute 3 features ciblées sur les faiblesses → relance la boucle
-3. **Score < 18/30** → corrections prioritaires sur les critères les plus faibles
+2. **Score >= 18/30** → crée 3 tickets ciblés dans `.orc/roadmap/todo/` → relance la boucle
+3. **Score < 18/30** → corrections prioritaires dans `.orc/roadmap/todo/`
 
 Le cycle evolve utilise une boucle `while` interne (pas `exec "$0"`) pour
 relancer la boucle feature sans redémarrer le process. Le compteur `evolve_cycle`
 est incrémenté et limité par `MAX_EVOLVE_CYCLES`.
+
+### Continuation post-DONE
+
+Un projet "terminé" (DONE.md) peut reprendre si de nouveaux tickets sont ajoutés
+via `orc roadmap ticket` ou `orc roadmap brainstorm`. Le mécanisme :
+1. L'humain crée des tickets → DONE.md est archivé dans `.orc/logs/`
+2. `workflow_phase` est reset à `features`
+3. `orc agent start` reprend la boucle avec les nouveaux tickets
 
 ---
 
@@ -342,7 +378,8 @@ est incrémenté et limité par `MAX_EVOLVE_CYCLES`.
 | `stack-conventions.md` | Conventions de stack | Après chaque feature (Reflect) |
 | `CLAUDE.md` | Ses instructions | Après chaque feature (Reflect) |
 | `.claude/skills/*.md` | Ses workflows | Quand un pattern se répète |
-| `ROADMAP.md` | Sa direction | Méta-rétros + veille |
+| `.orc/roadmap/` | Kanban tickets (source) | Strategy, evolve, ticket, brainstorm |
+| `ROADMAP.md` | Vue auto-générée (compat) | Régénéré après chaque changement |
 
 Le cycle vertueux (process + projet + économie de contexte) :
 ```
