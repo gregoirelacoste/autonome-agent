@@ -842,20 +842,13 @@ INSIGHTS MARCHÉ :
 ${research_content:-[pas de recherche]}"
       ;;
     product-review)
-      # Pré-injecter BRIEF + diff + challenger pour évaluation produit post-implémentation
-      local brief_content_pr="" diff_content="" challenger_content=""
+      # Pré-injecter BRIEF + diff réel + roadmap pour évaluation produit
+      # Note : le challenger est injecté séparément dans le feature loop (pas ici)
+      local brief_content_pr="" diff_stat_pr="" diff_content_pr="" roadmap_done_pr=""
       brief_content_pr=$(head -100 "$PROJECT_DIR/.orc/BRIEF.md" 2>/dev/null || true)
-      diff_content=$(run_in_project "git diff main...HEAD --stat 2>/dev/null" || true)
-      local _pr_n="${feature_name:-}"
-      # Trouver le N du feature count courant via le log le plus récent
-      local _pr_challenger_file=""
-      for f in "$PROJECT_DIR"/.orc/logs/challenger-*.md; do
-        [ -f "$f" ] && _pr_challenger_file="$f"
-      done
-      if [ -n "$_pr_challenger_file" ]; then
-        challenger_content=$(cat "$_pr_challenger_file" 2>/dev/null || true)
-      fi
-      local roadmap_done_pr=""
+      diff_stat_pr=$(run_in_project "git diff main...HEAD --stat 2>/dev/null" || true)
+      # Diff réel tronqué pour voir le code (pas juste les noms de fichiers)
+      diff_content_pr=$(run_in_project "git diff main...HEAD 2>/dev/null | head -200" || true)
       roadmap_done_pr=$(grep '^\- \[x\]' "$PROJECT_DIR/.orc/ROADMAP.md" 2>/dev/null | tail -10 || true)
 
       context_hint="
@@ -865,11 +858,11 @@ ${brief_content_pr:-[brief non disponible]}
 FEATURES DÉJÀ LIVRÉES :
 ${roadmap_done_pr:-[aucune encore]}
 
-DIFF DE CETTE FEATURE (fichiers modifiés) :
-${diff_content:-[pas de diff]}
+FICHIERS MODIFIÉS :
+${diff_stat_pr:-[pas de diff]}
 
-ENRICHISSEMENTS DU CHALLENGER (ce qui était attendu) :
-${challenger_content:-[pas de challenger]}"
+DIFF DE CETTE FEATURE (200 premières lignes) :
+${diff_content_pr:-[pas de diff]}"
       ;;
     plan)
       context_hint="
