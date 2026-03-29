@@ -114,7 +114,7 @@ DEFAULT_COST_PER_INPUT_TOKEN=0.000003
 DEFAULT_COST_PER_OUTPUT_TOKEN=0.000015
 
 # Résoudre le pricing pour un modèle donné
-# Usage: get_model_pricing "claude-sonnet-4-6-20250514" → set COST_PER_INPUT_TOKEN et COST_PER_OUTPUT_TOKEN
+# Usage: get_model_pricing "claude-sonnet-4-6" → set COST_PER_INPUT_TOKEN et COST_PER_OUTPUT_TOKEN
 # Note: itère les préfixes du plus long au plus court pour éviter les matchs ambigus
 get_model_pricing() {
   local model="${1:-}"
@@ -400,7 +400,7 @@ update_phase_tracking() {
   local feature="${2:-}"
   CURRENT_PHASE="$phase"
   PHASE_STARTED_AT=$(date -Iseconds)
-  [ -n "$feature" ] && CURRENT_FEATURE="$feature"
+  if [ -n "$feature" ]; then CURRENT_FEATURE="$feature"; fi
 }
 
 # Ajoute une entrée à la timeline des features
