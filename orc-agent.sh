@@ -684,6 +684,50 @@ format_duration_since() {
   fi
 }
 
+# Formate un nombre de tokens en lisible (1234567 → "1.23M", 45678 → "45.7K")
+format_tokens() {
+  local n="${1:-0}"
+  if [ "$n" -ge 1000000 ]; then
+    printf "%.2fM" "$(echo "scale=2; $n / 1000000" | bc)"
+  elif [ "$n" -ge 1000 ]; then
+    printf "%.1fK" "$(echo "scale=1; $n / 1000" | bc)"
+  else
+    printf "%d" "$n"
+  fi
+}
+
+# Formate une durée entre deux timestamps ISO en format lisible
+format_duration_between() {
+  local start_ts="$1" end_ts="$2"
+  local start_epoch end_epoch
+  start_epoch=$(date -d "$start_ts" +%s 2>/dev/null || echo "0")
+  end_epoch=$(date -d "$end_ts" +%s 2>/dev/null || echo "0")
+  [ "$start_epoch" -eq 0 ] || [ "$end_epoch" -eq 0 ] && echo "—" && return
+  local diff=$((end_epoch - start_epoch))
+  local hours=$((diff / 3600))
+  local minutes=$(( (diff % 3600) / 60 ))
+  local seconds=$((diff % 60))
+  if [ $hours -gt 0 ]; then
+    printf "%dh%02dm%02ds" "$hours" "$minutes" "$seconds"
+  elif [ $minutes -gt 0 ]; then
+    printf "%dm%02ds" "$minutes" "$seconds"
+  else
+    printf "%ds" "$seconds"
+  fi
+}
+
+# Raccourcit un nom de modèle pour l'affichage (claude-opus-4-6 → opus-4.6)
+short_model_name() {
+  local model="$1"
+  model="${model#claude-}"      # Supprime le préfixe claude-
+  # Convertit le dernier tiret en point pour la version (opus-4-6 → opus-4.6)
+  if [[ "$model" =~ ^([a-z]+)-([0-9]+)-([0-9]+) ]]; then
+    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+  else
+    echo "$model"
+  fi
+}
+
 # Estime le temps restant basé sur la durée moyenne par feature
 estimate_remaining() {
   local dir="$1"
@@ -835,43 +879,140 @@ cmd_status_detail() {
     printf "  Status : ${status_color}%s${NC}\n" "$status_label"
   fi
 
-  # Durée du run
+  # ── Session ──
+  local run_started="" run_ended="" has_state=false has_tokens=false
   if [ -f "$dir/.orc/state.json" ] && command -v jq &> /dev/null; then
-    local run_started
+    has_state=true
     run_started=$(jq -r '.run_started_at // ""' "$dir/.orc/state.json" 2>/dev/null)
-    if [ -n "$run_started" ] && [ "$run_started" != "null" ]; then
-      local duration
-      duration=$(format_duration_since "$run_started")
-      printf "  Durée : %s\n" "$duration"
-    fi
+    run_ended=$(jq -r '.run_ended_at // ""' "$dir/.orc/state.json" 2>/dev/null)
+    [ "$run_started" = "null" ] && run_started=""
+    [ "$run_ended" = "null" ] && run_ended=""
+  fi
+  [ -f "$dir/.orc/tokens.json" ] && has_tokens=true
+
+  echo ""
+  printf "  ${BOLD}── Session ──${NC}\n"
+
+  # Début
+  if [ -n "$run_started" ]; then
+    printf "  Début     %s\n" "$(date -d "$run_started" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$run_started")"
   fi
 
-  if [ -f "$dir/.orc/state.json" ]; then
+  # Fin ou durée en cours
+  if [ -n "$run_ended" ] && ! is_running "$name"; then
+    printf "  Fin       %s\n" "$(date -d "$run_ended" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$run_ended")"
+    if [ -n "$run_started" ]; then
+      local duration
+      duration=$(format_duration_between "$run_started" "$run_ended")
+      printf "  Durée     %s\n" "$duration"
+    fi
+  elif [ -n "$run_started" ]; then
+    local duration
+    duration=$(format_duration_since "$run_started")
+    printf "  Durée     %s ${DIM}(en cours)${NC}\n" "$duration"
+  fi
+
+  # Features
+  if [ "$has_state" = true ]; then
     local feat fail
     feat=$(jq -r '.feature_count // 0' "$dir/.orc/state.json" 2>/dev/null)
     fail=$(jq -r '.total_failures // 0' "$dir/.orc/state.json" 2>/dev/null)
-    printf "  Features : %s | Échecs : %s\n" "$feat" "$fail"
+    printf "  Features  %s | Échecs : %s\n" "$feat" "$fail"
   fi
 
-  if [ -f "$dir/.orc/tokens.json" ]; then
+  # Tokens + Coût détaillé
+  if [ "$has_tokens" = true ]; then
     local cost invocations tokens_in tokens_out
     cost=$(jq -r '.total_cost_usd // 0' "$dir/.orc/tokens.json" 2>/dev/null)
     invocations=$(jq -r '.invocations // 0' "$dir/.orc/tokens.json" 2>/dev/null)
     tokens_in=$(jq -r '.total_input_tokens // 0' "$dir/.orc/tokens.json" 2>/dev/null)
     tokens_out=$(jq -r '.total_output_tokens // 0' "$dir/.orc/tokens.json" 2>/dev/null)
-    local budget_str=""
+    local total_tokens=$((tokens_in + tokens_out))
+
+    # Tokens
+    printf "  Tokens    %s in / %s out (%s total)\n" \
+      "$(format_tokens "$tokens_in")" "$(format_tokens "$tokens_out")" "$(format_tokens "$total_tokens")"
+
+    # Coût + budget + pourcentage
+    local budget_str="" cost_pct=""
     if [ -f "$dir/.orc/config.sh" ]; then
       local max_budget
       max_budget=$(grep -oP 'MAX_BUDGET_USD="\K[^"]+' "$dir/.orc/config.sh" 2>/dev/null || echo "")
-      [ -n "$max_budget" ] && budget_str=" / \$$max_budget budget"
+      if [ -n "$max_budget" ]; then
+        budget_str=" / \$$max_budget"
+        # Calcul du pourcentage du budget
+        local pct
+        pct=$(echo "scale=1; $cost * 100 / $max_budget" | bc 2>/dev/null || echo "")
+        [ -n "$pct" ] && cost_pct=" (${pct}%)"
+      fi
     fi
-    printf "  Coût : \$%s%s (%s invocations)\n" "$cost" "$budget_str" "$invocations"
+
+    # Coût par heure
+    local cost_per_hour=""
+    if [ -n "$run_started" ]; then
+      local start_epoch now_epoch
+      start_epoch=$(date -d "$run_started" +%s 2>/dev/null || echo "0")
+      if [ -n "$run_ended" ] && ! is_running "$name"; then
+        now_epoch=$(date -d "$run_ended" +%s 2>/dev/null || echo "0")
+      else
+        now_epoch=$(date +%s)
+      fi
+      local elapsed=$((now_epoch - start_epoch))
+      if [ "$elapsed" -gt 60 ]; then
+        local cph
+        cph=$(echo "scale=2; $cost * 3600 / $elapsed" | bc 2>/dev/null || echo "")
+        [ -n "$cph" ] && cost_per_hour="  —  \$${cph}/h"
+      fi
+    fi
+
+    printf "  Coût      \$%s%s%s%s\n" "$cost" "$budget_str" "$cost_pct" "$cost_per_hour"
+    printf "  Appels    %s invocations" "$invocations"
+    if [ "$invocations" -gt 0 ]; then
+      local avg_cost
+      avg_cost=$(echo "scale=2; $cost / $invocations" | bc 2>/dev/null || echo "")
+      [ -n "$avg_cost" ] && printf " (moy. \$%s/appel)" "$avg_cost"
+    fi
+    printf "\n"
+
+    # Modèles utilisés (agrégé depuis tokens.json.by_phase.*.models_used)
+    local models_json
+    models_json=$(jq -r '
+      [.by_phase // {} | to_entries[].value.models_used // {} | to_entries[]] |
+      group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) |
+      sort_by(-.value) | map("\(.key):\(.value)") | join(",")
+    ' "$dir/.orc/tokens.json" 2>/dev/null || echo "")
+    if [ -n "$models_json" ]; then
+      local models_display=""
+      IFS=',' read -ra model_entries <<< "$models_json"
+      for entry in "${model_entries[@]}"; do
+        local mname="${entry%%:*}"
+        local mcount="${entry##*:}"
+        local short
+        short=$(short_model_name "$mname")
+        [ -n "$models_display" ] && models_display+=", "
+        models_display+="${short} x${mcount}"
+      done
+      printf "  Modèles   %s\n" "$models_display"
+    fi
+
+    # Top 3 phases par coût
+    local top_phases
+    top_phases=$(jq -r '
+      .by_phase // {} | to_entries |
+      sort_by(-.value.cost_usd) | .[0:3] |
+      map("\(.key) $\(.value.cost_usd)") | join(", ")
+    ' "$dir/.orc/tokens.json" 2>/dev/null || echo "")
+    if [ -n "$top_phases" ]; then
+      printf "  Top coût  %s\n" "$top_phases"
+    fi
   fi
 
-  # Modèle
-  local model_file="$ORC_DIR/.model"
-  if [ -f "$model_file" ]; then
-    printf "  Modèle : %s\n" "$(cat "$model_file")"
+  # Modèle configuré (fallback si pas de tokens.json)
+  if [ "$has_tokens" != true ]; then
+    local model_file="$ORC_DIR/.model"
+    if [ -f "$model_file" ]; then
+      printf "  Modèle    %s\n" "$(cat "$model_file")"
+    fi
   fi
 
   # Progress bar + roadmap

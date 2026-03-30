@@ -105,6 +105,13 @@ TOTAL_COST_USD=0
 # Pricing dynamique par modèle (USD par token)
 # Clé = préfixe du modèle, valeur = "input_cost:output_cost"
 declare -A MODEL_PRICING=(
+  # Claude 4.6
+  ["claude-opus-4-6"]="0.000015:0.000075"
+  ["claude-sonnet-4-6"]="0.000003:0.000015"
+  # Claude 4.5
+  ["claude-sonnet-4-5"]="0.000003:0.000015"
+  ["claude-haiku-4-5"]="0.0000008:0.000004"
+  # Claude 4 (fallback pour anciennes versions / préfixes courts)
   ["claude-opus-4"]="0.000015:0.000075"
   ["claude-sonnet-4"]="0.000003:0.000015"
   ["claude-haiku-4"]="0.0000008:0.000004"
