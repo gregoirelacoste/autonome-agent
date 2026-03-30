@@ -686,11 +686,16 @@ format_duration_since() {
 
 # Formate un nombre de tokens en lisible (1234567 → "1.23M", 45678 → "45.7K")
 format_tokens() {
-  local n="${1:-0}"
+  local raw="${1:-0}"
+  # Normalise : virgule → point, tronque les décimaux pour avoir un entier
+  raw="${raw//,/.}"
+  local n="${raw%%.*}"
+  n="${n:-0}"
   if [ "$n" -ge 1000000 ]; then
-    printf "%.2fM" "$(echo "scale=2; $n / 1000000" | bc)"
+    # Calcul en awk pour éviter les problèmes de locale avec printf/bc
+    awk "BEGIN { printf \"%.2fM\", $n / 1000000 }"
   elif [ "$n" -ge 1000 ]; then
-    printf "%.1fK" "$(echo "scale=1; $n / 1000" | bc)"
+    awk "BEGIN { printf \"%.1fK\", $n / 1000 }"
   else
     printf "%d" "$n"
   fi
@@ -938,11 +943,10 @@ cmd_status_detail() {
     if [ -f "$dir/.orc/config.sh" ]; then
       local max_budget
       max_budget=$(grep -oP 'MAX_BUDGET_USD="\K[^"]+' "$dir/.orc/config.sh" 2>/dev/null || echo "")
-      if [ -n "$max_budget" ]; then
+      if [ -n "$max_budget" ] && [ "$max_budget" != "0" ]; then
         budget_str=" / \$$max_budget"
-        # Calcul du pourcentage du budget
         local pct
-        pct=$(echo "scale=1; $cost * 100 / $max_budget" | bc 2>/dev/null || echo "")
+        pct=$(awk "BEGIN { printf \"%.1f\", $cost * 100 / $max_budget }" 2>/dev/null || echo "")
         [ -n "$pct" ] && cost_pct=" (${pct}%)"
       fi
     fi
@@ -960,7 +964,7 @@ cmd_status_detail() {
       local elapsed=$((now_epoch - start_epoch))
       if [ "$elapsed" -gt 60 ]; then
         local cph
-        cph=$(echo "scale=2; $cost * 3600 / $elapsed" | bc 2>/dev/null || echo "")
+        cph=$(awk "BEGIN { printf \"%.2f\", $cost * 3600 / $elapsed }" 2>/dev/null || echo "")
         [ -n "$cph" ] && cost_per_hour="  —  \$${cph}/h"
       fi
     fi
@@ -969,15 +973,18 @@ cmd_status_detail() {
     printf "  Appels    %s invocations" "$invocations"
     if [ "$invocations" -gt 0 ]; then
       local avg_cost
-      avg_cost=$(echo "scale=2; $cost / $invocations" | bc 2>/dev/null || echo "")
+      avg_cost=$(awk "BEGIN { printf \"%.2f\", $cost / $invocations }" 2>/dev/null || echo "")
       [ -n "$avg_cost" ] && printf " (moy. \$%s/appel)" "$avg_cost"
     fi
     printf "\n"
 
     # Modèles utilisés (agrégé depuis tokens.json.by_phase.*.models_used)
+    # Normalise les noms (supprime suffixes date -20XXXXXX) et filtre les vides/unknown
     local models_json
     models_json=$(jq -r '
-      [.by_phase // {} | to_entries[].value.models_used // {} | to_entries[]] |
+      [.by_phase // {} | to_entries[].value.models_used // {} | to_entries[]
+       | select(.key != "" and .key != "unknown" and .key != "null")
+       | .key |= (gsub("-2025[0-9]+$"; "") | gsub("-2026[0-9]+$"; ""))] |
       group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) |
       sort_by(-.value) | map("\(.key):\(.value)") | join(",")
     ' "$dir/.orc/tokens.json" 2>/dev/null || echo "")
