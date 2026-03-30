@@ -3,7 +3,7 @@
 # orc-admin.sh — Administration système (sourcé par orc.sh)
 # ============================================================
 #
-# Sous-commandes : config, model, budget, key, version, update
+# Sous-commandes : config, model, budget, key, version
 #
 # Variables attendues de orc.sh :
 #   ORC_DIR, ORC_VERSION, PROJECTS_DIR,
@@ -427,7 +427,6 @@ admin_help() {
   printf "  ${CYAN}orc admin key set-gemini <key>${NC}     Configurer clé Gemini\n"
   echo ""
   printf "  ${CYAN}orc admin version${NC}                  Version + vérification dépendances\n"
-  printf "  ${CYAN}orc admin update${NC}                   Mettre à jour le template (git pull)\n"
   echo ""
 }
 
@@ -445,11 +444,6 @@ admin_dispatch() {
     budget)  admin_budget "$@" ;;
     key)     admin_key "$@" ;;
     version) admin_version ;;
-    update)
-      # Réutiliser la commande update de orc-agent
-      source "$ORC_DIR/orc-agent.sh"
-      cmd_update
-      ;;
     help|-h|--help) admin_help ;;
     *) die "Commande inconnue : admin $subcmd. Voir : orc admin help" ;;
   esac
